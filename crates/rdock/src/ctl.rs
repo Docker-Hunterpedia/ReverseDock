@@ -213,6 +213,71 @@ fn exchange(
     })
 }
 
+/// `rdock upgrade`: asks the running process, over its Unix socket only, to hand over to a new
+/// binary; waits for the outcome.
+pub(crate) fn upgrade(args: &crate::UpgradeArgs) -> anyhow::Result<ExitCode> {
+    let socket = rdock_config::load_file(&args.config)
+        .ok()
+        .and_then(|l| l.config.admin.socket)
+        .unwrap_or_else(|| socket_path(&args.data_dir));
+    let stream = UnixStream::connect(&socket).with_context(|| {
+        format!(
+            "cannot reach the admin socket {} (is rdock running? upgrades are only accepted on the socket, on the server)",
+            socket.display()
+        )
+    })?;
+    // The new binary validates the configuration and starts within `upgrade.start_timeout`
+    // twice over (ready, then serving), at most ten minutes each.
+    let timeout = Duration::from_secs(30 * 60);
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(TIMEOUT))?;
+    let mut body = match &args.binary {
+        Some(binary) => {
+            let absolute = std::path::absolute(binary)
+                .with_context(|| format!("resolving {}", binary.display()))?;
+            serde_json::json!({ "binary": absolute })
+        }
+        None => serde_json::json!({}),
+    };
+    if args.allow_downgrade {
+        body["allow_downgrade"] = serde_json::Value::Bool(true);
+    }
+    let answer = exchange(
+        stream,
+        &Call::new("POST", "/api/v1/upgrade").json(&body),
+        "localhost",
+        None,
+    )?;
+    let document = answer.json();
+    match answer.status {
+        200 => {
+            print(&format!(
+                "upgraded: pid {} serves now; pid {} drains{}\n",
+                document["pid"],
+                document["previous_pid"],
+                document["drain_seconds"]
+                    .as_u64()
+                    .map(|s| format!(" for up to {s} s"))
+                    .unwrap_or_default()
+            ))?;
+            Ok(ExitCode::SUCCESS)
+        }
+        409 | 500 => {
+            eprintln!(
+                "error: upgrade {}: {}",
+                if answer.status == 409 {
+                    "refused"
+                } else {
+                    "failed; the running process serves on"
+                },
+                document["error"].as_str().unwrap_or(&answer.body)
+            );
+            Ok(ExitCode::from(1))
+        }
+        status => bail!("the admin API answered {status}: {}", answer.body),
+    }
+}
+
 pub(crate) fn reload(args: &CtlArgs) -> anyhow::Result<ExitCode> {
     let (status, body) = send(&target(args)?, "POST", "/api/v1/config/reload")?;
     if status == 401 {
@@ -281,6 +346,12 @@ pub(crate) fn status(args: &StatusArgs) -> anyhow::Result<ExitCode> {
         ),
         format!("started      {}", s["started_at"].as_str().unwrap_or("?")),
     ];
+    if let Some(runtime) = s["runtime"].as_object() {
+        lines.push(format!(
+            "runtime      {} worker threads, at most {} blocking",
+            runtime["worker_threads"], runtime["max_blocking_threads"]
+        ));
+    }
     for listener in s["listeners"].as_array().into_iter().flatten() {
         lines.push(format!(
             "listener     {} {} {} ({} routes)",

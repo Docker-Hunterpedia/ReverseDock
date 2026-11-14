@@ -52,6 +52,9 @@ pub enum IssueError {
     /// The TLS-ALPN-01 validation certificate could not be built.
     #[error("cannot build the TLS-ALPN-01 certificate: {0}")]
     ValidationCert(String),
+    /// The cluster store could not take a challenge answer.
+    #[error("cluster: {0}")]
+    Cluster(String),
 }
 
 /// What to order.
@@ -80,35 +83,92 @@ pub struct DnsChallenge {
     pub timeout: Duration,
 }
 
-/// Removes the challenge answers when the order ends, whatever the outcome. DNS records need
-/// an async call and are removed by [`Answers::remove_dns`].
-struct Answers<'a> {
-    challenges: &'a Challenges,
-    tokens: Vec<String>,
-    names: Vec<String>,
-    /// `(fqdn, value)` of published TXT records.
-    dns: Vec<(String, String)>,
-    /// Names whose authorization uses DNS-01.
-    dns_names: Vec<String>,
+/// Where HTTP-01 and TLS-ALPN-01 answers go: this instance's maps only, or (in a cluster)
+/// every member's, with a barrier before the CA is told to validate (ADR-0031).
+#[async_trait::async_trait]
+pub trait AnswerSink: Send + Sync {
+    /// Publishes the answer to an HTTP-01 challenge.
+    async fn add_http01(&self, token: &str, key_authorization: &str) -> Result<(), IssueError>;
+    /// Publishes the answer to a TLS-ALPN-01 challenge for `name`: the SHA-256 digest of the
+    /// key authorization (each instance builds its own validation certificate from it).
+    async fn add_tls_alpn01(&self, name: &str, digest: &[u8]) -> Result<(), IssueError>;
+    /// Returns once the answers published so far can be served where the CA may ask.
+    async fn ready(&self) -> Result<(), IssueError>;
+    /// Withdraws every answer this sink published.
+    async fn clear(&self);
 }
 
-impl Answers<'_> {
-    async fn remove_dns(&mut self, dns: Option<&DnsChallenge>) {
-        let Some(dns) = dns else { return };
-        for (fqdn, value) in self.dns.drain(..) {
-            if let Err(e) = dns.solver.cleanup(&fqdn, &value).await {
-                warn!(fqdn = %fqdn, error = %e, "cannot remove the DNS-01 record");
-            }
+/// This instance's answer maps (the data plane reads them on the request path).
+pub struct LocalAnswers {
+    challenges: Arc<Challenges>,
+    published: std::sync::Mutex<(Vec<String>, Vec<String>)>,
+}
+
+impl LocalAnswers {
+    /// A sink into `challenges`.
+    #[must_use]
+    pub fn new(challenges: Arc<Challenges>) -> Self {
+        Self {
+            challenges,
+            published: std::sync::Mutex::new((Vec::new(), Vec::new())),
+        }
+    }
+
+    fn take(&self) -> (Vec<String>, Vec<String>) {
+        std::mem::take(
+            &mut *self
+                .published
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+}
+
+impl Drop for LocalAnswers {
+    fn drop(&mut self) {
+        let (tokens, names) = self.take();
+        for token in &tokens {
+            self.challenges.remove_http01(token);
+        }
+        for name in &names {
+            self.challenges.remove_tls_alpn01(name);
         }
     }
 }
 
-impl Drop for Answers<'_> {
-    fn drop(&mut self) {
-        for token in &self.tokens {
+#[async_trait::async_trait]
+impl AnswerSink for LocalAnswers {
+    async fn add_http01(&self, token: &str, key_authorization: &str) -> Result<(), IssueError> {
+        self.challenges.add_http01(token, key_authorization);
+        self.published
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .0
+            .push(token.to_owned());
+        Ok(())
+    }
+
+    async fn add_tls_alpn01(&self, name: &str, digest: &[u8]) -> Result<(), IssueError> {
+        let certificate = validation_certificate(name, digest)?;
+        self.challenges.add_tls_alpn01(name, &certificate);
+        self.published
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .1
+            .push(name.to_owned());
+        Ok(())
+    }
+
+    async fn ready(&self) -> Result<(), IssueError> {
+        Ok(())
+    }
+
+    async fn clear(&self) {
+        let (tokens, names) = self.take();
+        for token in &tokens {
             self.challenges.remove_http01(token);
         }
-        for name in &self.names {
+        for name in &names {
             self.challenges.remove_tls_alpn01(name);
         }
     }
@@ -119,42 +179,66 @@ impl Drop for Answers<'_> {
 pub async fn issue(
     account: &Account,
     spec: OrderSpec<'_>,
-    challenges: &Challenges,
+    challenges: &Arc<Challenges>,
 ) -> Result<Issued, IssueError> {
-    let mut order = new_order(account, spec).await?;
-    let mut answers = Answers {
-        challenges,
-        tokens: Vec::new(),
-        names: Vec::new(),
-        dns: Vec::new(),
-        dns_names: Vec::new(),
-    };
-    let validated = validate(&mut order, spec, &mut answers).await;
-    answers.remove_dns(spec.dns).await;
-    drop(answers);
-    validated?;
+    let answers = LocalAnswers::new(challenges.clone());
     let key = KeyPair::generate()?;
-    let csr = csr_params(spec.names)?.serialize_request(&key)?;
-    order.finalize_csr(csr.der()).await?;
-    let chain_pem = order
-        .poll_certificate(&RetryPolicy::new().timeout(SIGNING_TIMEOUT))
-        .await?;
+    let mut order = new_order(account, spec).await?;
+    let chain_pem = complete(&mut order, spec, &answers, &key).await?;
     Ok(Issued {
         chain_pem,
         key_pem: key.serialize_pem(),
     })
 }
 
-/// Publishes an answer for every pending authorization, tells the CA to validate, and waits.
+/// Takes `order` from whatever state it is in to a certificate: answers and validates while it
+/// is pending, finalizes with `key` when ready, downloads when processing or valid. An order an
+/// earlier holder of the lease started is finished the same way (ADR-0031).
+pub async fn complete(
+    order: &mut Order,
+    spec: OrderSpec<'_>,
+    answers: &dyn AnswerSink,
+    key: &KeyPair,
+) -> Result<String, IssueError> {
+    for _ in 0..4 {
+        let status = order.refresh().await?.status;
+        match status {
+            OrderStatus::Pending => {
+                let validated = validate(order, spec, answers).await;
+                answers.clear().await;
+                validated?;
+            }
+            OrderStatus::Ready => {
+                let csr = csr_params(spec.names)?.serialize_request(key)?;
+                order.finalize_csr(csr.der()).await?;
+            }
+            OrderStatus::Processing | OrderStatus::Valid => {
+                return Ok(order
+                    .poll_certificate(&RetryPolicy::new().timeout(SIGNING_TIMEOUT))
+                    .await?);
+            }
+            OrderStatus::Invalid => return Err(IssueError::Invalid(failure_detail(order).await)),
+        }
+    }
+    Err(IssueError::Invalid(
+        "the order did not reach a certificate".to_owned(),
+    ))
+}
+
+/// Publishes an answer for every pending authorization, waits until they can be served (DNS
+/// records visible; in a cluster, every member holding the HTTP and TLS answers), tells the CA
+/// to validate, and waits for the order to become ready.
 async fn validate(
     order: &mut Order,
     spec: OrderSpec<'_>,
-    answers: &mut Answers<'_>,
+    answers: &dyn AnswerSink,
 ) -> Result<(), IssueError> {
+    let mut chosen: Vec<(String, ChallengeType)> = Vec::new();
+    let mut dns_records: Vec<(String, String)> = Vec::new();
     let mut authorizations = order.authorizations();
     while let Some(authorization) = authorizations.next().await {
         let mut authorization = authorization?;
-        if authorization.status == AuthorizationStatus::Valid {
+        if authorization.status != AuthorizationStatus::Pending {
             continue;
         }
         let name = authorization.identifier().to_string();
@@ -166,7 +250,7 @@ async fn validate(
             .find(|t| authorization.challenges.iter().any(|c| c.r#type == **t))
             .cloned()
             .ok_or_else(|| IssueError::NoChallenge(name.clone()))?;
-        let mut challenge = authorization
+        let challenge = authorization
             .challenge(offered.clone())
             .ok_or_else(|| IssueError::NoChallenge(name.clone()))?;
         let key_authorization = challenge.key_authorization();
@@ -177,59 +261,69 @@ async fn validate(
                     .ok_or_else(|| IssueError::NoChallenge(name.clone()))?;
                 let (fqdn, value) = (challenge_name(&name), key_authorization.dns_value());
                 dns.solver.present(&fqdn, &value).await?;
-                answers.dns.push((fqdn, value));
-                answers.dns_names.push(name);
-                // Validation is requested once the record is visible, below.
-                continue;
+                dns_records.push((fqdn, value));
             }
             ChallengeType::TlsAlpn01 => {
-                let certificate =
-                    validation_certificate(&name, key_authorization.digest().as_ref())?;
-                answers.challenges.add_tls_alpn01(&name, &certificate);
-                answers.names.push(name);
+                answers
+                    .add_tls_alpn01(&name, key_authorization.digest().as_ref())
+                    .await?;
             }
             _ => {
                 let token = challenge.token.clone();
                 answers
-                    .challenges
-                    .add_http01(&token, key_authorization.as_str());
-                answers.tokens.push(token);
+                    .add_http01(&token, key_authorization.as_str())
+                    .await?;
             }
         }
-        challenge.set_ready().await?;
+        chosen.push((name, offered));
     }
-    if let Some(dns) = spec.dns.filter(|_| !answers.dns.is_empty()) {
-        for (fqdn, value) in &answers.dns {
-            wait_until_visible(fqdn, value, &dns.lookup, dns.timeout).await;
+    let result = async {
+        if let Some(dns) = spec.dns.filter(|_| !dns_records.is_empty()) {
+            for (fqdn, value) in &dns_records {
+                wait_until_visible(fqdn, value, &dns.lookup, dns.timeout).await;
+            }
+        }
+        if chosen.iter().any(|(_, t)| *t != ChallengeType::Dns01) {
+            answers.ready().await?;
         }
         let mut authorizations = order.authorizations();
         while let Some(authorization) = authorizations.next().await {
             let mut authorization = authorization?;
             let name = authorization.identifier().to_string();
-            if authorization.status == AuthorizationStatus::Valid
-                || !answers.dns_names.contains(&name)
-            {
+            let Some((_, kind)) = chosen.iter().find(|(n, _)| *n == name) else {
+                continue;
+            };
+            if authorization.status != AuthorizationStatus::Pending {
                 continue;
             }
-            if let Some(mut challenge) = authorization.challenge(ChallengeType::Dns01) {
+            if let Some(mut challenge) = authorization.challenge(kind.clone()) {
                 challenge.set_ready().await?;
             }
         }
+        let status = order
+            .poll_ready(&RetryPolicy::new().timeout(VALIDATION_TIMEOUT))
+            .await?;
+        if status == OrderStatus::Ready {
+            Ok(())
+        } else {
+            Err(IssueError::Invalid(failure_detail(order).await))
+        }
     }
-    let status = order
-        .poll_ready(&RetryPolicy::new().timeout(VALIDATION_TIMEOUT))
-        .await?;
-    if status == OrderStatus::Ready {
-        Ok(())
-    } else {
-        Err(IssueError::Invalid(failure_detail(order).await))
+    .await;
+    if let Some(dns) = spec.dns {
+        for (fqdn, value) in &dns_records {
+            if let Err(e) = dns.solver.cleanup(fqdn, value).await {
+                warn!(fqdn = %fqdn, error = %e, "cannot remove the DNS-01 record");
+            }
+        }
     }
+    result
 }
 
 /// Creates the order. `replaces` (RFC 9773) only earns a renewal its rate-limit exemption, so
 /// when the CA refuses an order because of it (`alreadyReplaced`, or a CA that cannot match the
 /// replaced certificate), the order is created again without it. Rate limits are not retried.
-async fn new_order(account: &Account, spec: OrderSpec<'_>) -> Result<Order, IssueError> {
+pub async fn new_order(account: &Account, spec: OrderSpec<'_>) -> Result<Order, IssueError> {
     let identifiers: Vec<Identifier> = spec.names.iter().map(|n| identifier(n)).collect();
     let plain = || {
         let order = NewOrder::new(&identifiers);
@@ -260,7 +354,7 @@ fn is_rate_limit(problem: &instant_acme::Problem) -> bool {
 /// The signing request for `names`. rcgen fills the subject with a placeholder common name,
 /// which Let's Encrypt refuses ("rejectedIdentifier"); the subject names the first name
 /// instead, or stays empty when that name is longer than a common name may be (64 bytes).
-fn csr_params(names: &[String]) -> Result<CertificateParams, IssueError> {
+pub(crate) fn csr_params(names: &[String]) -> Result<CertificateParams, IssueError> {
     let mut params = CertificateParams::new(names.to_vec())?;
     params.distinguished_name = DistinguishedName::new();
     if let Some(first) = names.first().filter(|n| n.len() <= 64) {
@@ -273,7 +367,10 @@ fn csr_params(names: &[String]) -> Result<CertificateParams, IssueError> {
 
 /// The self-signed TLS-ALPN-01 certificate for `name` (RFC 8737): one name and the critical
 /// acmeIdentifier extension holding the SHA-256 digest of the key authorization.
-fn validation_certificate(name: &str, digest: &[u8]) -> Result<Arc<CertifiedKey>, IssueError> {
+pub(crate) fn validation_certificate(
+    name: &str,
+    digest: &[u8],
+) -> Result<Arc<CertifiedKey>, IssueError> {
     if digest.len() != 32 {
         return Err(IssueError::ValidationCert(format!(
             "the key authorization digest has {} bytes, not 32",

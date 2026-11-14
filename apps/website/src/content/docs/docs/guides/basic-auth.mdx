@@ -112,6 +112,16 @@ The weak formats are accepted so that files from `htpasswd` and Traefik keep wor
 entry with `rdock hash --user <name>`. Under `--strict` that warning is an error. A plain-text
 password in `users` is an error; in a users file, an entry in an unknown format never matches.
 
+**Cost ceilings.** An argon2id or bcrypt hash carries its own cost, and every request with a
+wrong password does that work, so a hash asking for too much would let anyone exhaust the
+proxy's memory or threads. Refused, in `users` at validation and in a users file when it is
+loaded or reloaded (the reload is refused and the running configuration stays): argon2id with
+more than `m=262144` (256 MiB), `t=10` or `p=8`, and bcrypt with a cost above `14`. These are
+several times the minimums of OWASP's
+[Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)
+(read 2026-11-13: argon2id at least `m=19456, t=2, p=1`; bcrypt at least `10`) and the same as
+the bounds of `admin.passwords.argon2`.
+
 ## How requests are checked
 
 - A request without valid credentials gets **401** with
@@ -119,6 +129,11 @@ password in `users` is an error; in a users file, an entry in an unknown format 
 - argon2id and bcrypt are slow on purpose. ReverseDock checks them on a separate thread pool and
   remembers a successful check for five minutes, so a browser that sends the credentials with
   every request does not pay the cost each time.
+- At most four checks run at once across every `basic_auth` middleware (fewer on a machine
+  with fewer CPUs). A request that finds them all busy waits up to one second, then gets
+  **503** (problem type [`overloaded`](/docs/reference/problems/#overloaded)) with
+  `Retry-After: 1`. Failed checks are not remembered, so a flood of wrong passwords is held to
+  that pace instead of piling up threads.
 - The authenticated user name appears in the `user` field of the
   [access log](/docs/guides/logs-and-metrics/). The `Authorization` header itself is redacted
   from the log by default.

@@ -5,6 +5,8 @@ sidebar:
   order: 10
 ---
 
+import Status from '../../../../components/Status.astro';
+
 ReverseDock applies a changed configuration while it runs. A reload never drops requests, and a configuration with an error is never applied: the running one stays in place.
 
 ## Four ways to reload
@@ -62,6 +64,7 @@ ready        true
 generation   4
 config       /etc/rdock/rdock.yaml (file)
 started      2026-10-27T09:12:03.371Z
+runtime      4 worker threads, at most 512 blocking
 listener     web :80 http (0 routes)
 listener     websecure :443 https/intermediate (2 routes)
 last reload  applied by file change at 2026-10-27T09:40:17.396Z
@@ -90,6 +93,8 @@ The answer is a JSON report with `result` (`applied` or `rejected`), `generation
 Adding, removing or moving a listener does not need a restart. New sockets are bound before anything changes; if an address is already in use, the reload is rejected and the old listeners keep running. A listener whose address is unchanged keeps its socket. A removed listener stops accepting connections, and its open requests may finish for up to `lifecycle.drain_timeout`.
 
 The admin listener is the exception: it is bound once at start, so a change to `admin.listener` (or to `admin.enabled`) takes effect after a restart.
+
+A listener that keeps its socket also keeps it when its `socket` options change <Status planned="v0.9" />: the backlog, the buffers and Fast Open are changed on the running socket, and `keepalive`, `user_timeout` and `dscp` apply to new connections. `reuse_port` and `ipv6_only` are set before a socket is bound, so a change to them, like a change to `runtime` (the proxy's threads), takes effect after a restart; the reload is applied without them and reports a warning. See [Sockets and threads](/docs/guides/sockets-and-threads/).
 
 ## History and last-known-good
 

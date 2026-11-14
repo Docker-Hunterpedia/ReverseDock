@@ -383,6 +383,11 @@ pub(crate) async fn effective(
     else {
         return error(StatusCode::SERVICE_UNAVAILABLE, "rdock is shutting down");
     };
+    // A tenant sees its own API objects and nothing else of the configuration.
+    let config = match caller.scope() {
+        Some(scope) => scope.effective(&config),
+        None => config,
+    };
     let owners = owners(&config);
     axum::Json(json!({ "config": masked(config, &[]), "owners": owners })).into_response()
 }
@@ -397,9 +402,13 @@ pub(crate) async fn get_api(
 ) -> Response {
     check!(need(&caller, Access::Viewer));
     match api_config(&state).await {
-        Some((fragment, etag)) => {
-            with_etag(axum::Json(masked(fragment, &[])).into_response(), &etag)
-        }
+        Some((fragment, etag)) => match caller.scope() {
+            Some(scope) => with_etag(
+                axum::Json(masked(scope.view(&fragment), &[])).into_response(),
+                &scope.etag(&fragment),
+            ),
+            None => with_etag(axum::Json(masked(fragment, &[])).into_response(), &etag),
+        },
         None => error(StatusCode::SERVICE_UNAVAILABLE, "rdock is shutting down"),
     }
 }
@@ -425,7 +434,121 @@ pub(crate) async fn put_api(
         Ok(tag) => tag,
         Err(denied) => return denied.into_response(),
     };
+    if caller.scope().is_some() {
+        return write_scoped(&state, &caller, candidate, if_match, ("config.apply", None)).await;
+    }
     write(&state, &caller, candidate, if_match, "config.apply").await
+}
+
+/// How many times a tenant's write is retried when another tenant's write came between the
+/// read and the write (the tenant's own part unchanged).
+const TENANT_WRITE_ATTEMPTS: usize = 4;
+
+/// A tenant's write: `candidate` is its part of the API objects (as `GET /config/api`
+/// returns it to the tenant), conditional on the tenant's own version tag; the other
+/// tenants' objects are kept as they are. Refusals are 403 (outside the tenant) and 422
+/// (the tenant's rules, from validation), both audited; the report shows only the
+/// diagnostics about the tenant's objects.
+pub(crate) async fn write_scoped(
+    state: &State,
+    caller: &Caller,
+    candidate: Value,
+    if_match: String,
+    (action, resource): (&'static str, Option<String>),
+) -> Response {
+    let Some(scope) = caller.scope() else {
+        return write_as(
+            state,
+            caller,
+            candidate,
+            if_match,
+            (action, resource),
+            |report, etag| with_etag(axum::Json(report).into_response(), etag),
+        )
+        .await;
+    };
+    if let Some(wait) = over_budget(state) {
+        return crate::auth::too_many(wait);
+    }
+    for _ in 0..TENANT_WRITE_ATTEMPTS {
+        let Some((current, global)) = api_config(state).await else {
+            return error(StatusCode::SERVICE_UNAVAILABLE, "rdock is shutting down");
+        };
+        let tag = scope.etag(&current);
+        if if_match.trim() != tag {
+            return with_etag(
+                error(
+                    StatusCode::PRECONDITION_FAILED,
+                    "your configuration changed since you read it; fetch it again",
+                ),
+                &tag,
+            );
+        }
+        let mut candidate = candidate.clone();
+        if let Err(message) = restore_masked(&mut candidate, &scope.view(&current), &mut Vec::new())
+        {
+            return error(StatusCode::UNPROCESSABLE_ENTITY, &message);
+        }
+        let full = match scope.merge(&current, &candidate) {
+            Ok(full) => full,
+            Err(message) => {
+                return crate::caller::tenant_denied(
+                    state,
+                    caller,
+                    "/api/v1/config/api".to_owned(),
+                    &message,
+                );
+            }
+        };
+        let control = state.control.clone();
+        let written = full.clone();
+        let Ok(outcome) = state
+            .main
+            .spawn(async move { control.write_api(written, global).await })
+            .await
+        else {
+            return error(StatusCode::SERVICE_UNAVAILABLE, "rdock is shutting down");
+        };
+        match outcome {
+            ApiWrite::Applied { report, .. } => {
+                let tag = scope.etag(&full);
+                state.audit.record(Event {
+                    config: Some((hash_of(&if_match), hash_of(&tag))),
+                    resource,
+                    ..caller.event(action)
+                });
+                return with_etag(axum::Json(scope.report(&report)).into_response(), &tag);
+            }
+            ApiWrite::Rejected { report } => {
+                state.audit.record(Event {
+                    outcome: Outcome::Failed,
+                    reason: Some("the configuration was rejected".into()),
+                    resource,
+                    ..caller.event(action)
+                });
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    axum::Json(scope.report(&report)),
+                )
+                    .into_response();
+            }
+            // Another write came in between; try again on the new objects.
+            ApiWrite::Stale { .. } => {}
+            ApiWrite::Invalid(message) => {
+                state.audit.record(Event {
+                    outcome: Outcome::Failed,
+                    reason: Some("not a valid document".into()),
+                    resource,
+                    ..caller.event(action)
+                });
+                return error(StatusCode::UNPROCESSABLE_ENTITY, &message);
+            }
+        }
+    }
+    error(
+        StatusCode::CONFLICT,
+        "the configuration kept changing; try again",
+    )
 }
 
 /// `PATCH /api/v1/config/api`: changes some of the API provider's objects, as a JSON Merge
@@ -470,6 +593,10 @@ pub(crate) async fn patch_api(
     let Some((mut current, _)) = api_config(&state).await else {
         return error(StatusCode::SERVICE_UNAVAILABLE, "rdock is shutting down");
     };
+    // A tenant patches its own part, as it reads it.
+    if let Some(scope) = caller.scope() {
+        current = scope.view(&current);
+    }
     match kind.as_str() {
         "application/merge-patch+json" => merge_patch(&mut current, &patch),
         "application/json-patch+json" => {
@@ -496,6 +623,9 @@ pub(crate) async fn patch_api(
             );
         }
     }
+    if caller.scope().is_some() {
+        return write_scoped(&state, &caller, current, if_match, ("config.apply", None)).await;
+    }
     write(&state, &caller, current, if_match, "config.apply").await
 }
 
@@ -518,7 +648,26 @@ pub(crate) async fn validate(
     let Some((current, _)) = api_config(&state).await else {
         return error(StatusCode::SERVICE_UNAVAILABLE, "rdock is shutting down");
     };
-    let changes = diff(&masked(current, &[]), &masked(candidate.clone(), &[]));
+    // A tenant validates its own part: the diff and the diagnostics cover nothing else.
+    let (shown, candidate) = match caller.scope() {
+        Some(scope) => match scope.merge(&current, &candidate) {
+            Ok(full) => (scope.view(&current), full),
+            Err(message) => {
+                return crate::caller::tenant_denied(
+                    &state,
+                    &caller,
+                    "/api/v1/config/validate".to_owned(),
+                    &message,
+                );
+            }
+        },
+        None => (current, candidate),
+    };
+    let candidate_shown = match caller.scope() {
+        Some(scope) => scope.view(&candidate),
+        None => candidate.clone(),
+    };
+    let changes = diff(&masked(shown, &[]), &masked(candidate_shown, &[]));
     let control = state.control.clone();
     let checked = state
         .main
@@ -528,6 +677,12 @@ pub(crate) async fn validate(
         Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "rdock is shutting down"),
         Ok(Err(message)) => error(StatusCode::UNPROCESSABLE_ENTITY, &message),
         Ok(Ok((valid, diagnostics))) => {
+            let diagnostics = match caller.scope() {
+                Some(scope) => {
+                    scope.report(&json!({ "diagnostics": diagnostics }))["diagnostics"].clone()
+                }
+                None => diagnostics,
+            };
             axum::Json(json!({ "valid": valid, "diagnostics": diagnostics, "diff": changes }))
                 .into_response()
         }

@@ -5,7 +5,9 @@ target/
 .claude/
 .agents/
 docs/
-benchmarks/
+# The workspace member benchmarks/perreq must be in the context, or cargo cannot load the workspace.
+benchmarks/*
+!benchmarks/perreq/
 graphify-out/
 **/node_modules/
 apps/website/

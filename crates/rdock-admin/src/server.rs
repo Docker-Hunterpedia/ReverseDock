@@ -70,6 +70,14 @@ pub enum StartError {
 /// The running admin API. Dropping it does not stop it; send `true` on the stop channel.
 pub struct Running {
     thread: std::thread::JoinHandle<()>,
+    /// Duplicates of the listening sockets, to hand to the next process in a binary upgrade.
+    tcp: Option<std::net::TcpListener>,
+    unix: Option<(std::os::unix::net::UnixListener, PathBuf)>,
+    /// Leave the socket file in place at exit: the next process serves it.
+    keep_socket_file: Arc<std::sync::atomic::AtomicBool>,
+    /// Refuse requests that change something (a binary upgrade is handing over).
+    read_only: Arc<std::sync::atomic::AtomicBool>,
+    audit: Arc<Audit>,
 }
 
 impl Running {
@@ -77,6 +85,63 @@ impl Running {
     pub async fn stopped(self) {
         let _ = tokio::task::spawn_blocking(move || self.thread.join()).await;
     }
+
+    /// The listening sockets (TCP, and the Unix socket with its path), as the next process in
+    /// a binary upgrade adopts them.
+    #[must_use]
+    pub fn sockets(
+        &self,
+    ) -> (
+        Option<&std::net::TcpListener>,
+        Option<(&std::os::unix::net::UnixListener, &Path)>,
+    ) {
+        (
+            self.tcp.as_ref(),
+            self.unix.as_ref().map(|(l, p)| (l, p.as_path())),
+        )
+    }
+
+    /// Writes a record to the audit log (for events outside a request, such as the end of a
+    /// binary upgrade, which the new process records).
+    pub fn audit(&self, event: crate::audit::Event) {
+        self.audit.record(event);
+    }
+
+    /// While on, requests other than `GET`, `HEAD` and `OPTIONS` are answered 503: a binary
+    /// upgrade is handing over and the next process has already read the users, tokens and
+    /// configuration, so nothing may change them here meanwhile.
+    pub fn set_read_only(&self, on: bool) {
+        self.read_only
+            .store(on, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Reads the end of the audit chain from disk again: this process becomes the log's writer
+    /// after another one may have appended to it (binary upgrade).
+    pub fn resync_audit(&self) {
+        if let Err(err) = self.audit.resync() {
+            tracing::warn!(error = %err, "cannot read the end of the audit log again");
+        }
+    }
+
+    /// Keeps the socket file when this process stops (another process now serves it).
+    pub fn keep_socket_file(&self) {
+        self.keep_socket_file
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Sockets the admin API serves instead of binding its own, and when it accepts.
+#[derive(Default)]
+pub struct Sockets {
+    /// An already-bound TCP listener (handed over by the previous process); otherwise
+    /// `Settings::address` is bound.
+    pub tcp: Option<std::net::TcpListener>,
+    /// An already-bound Unix listener and its path; otherwise `Settings::socket` is bound
+    /// (removing a stale file first).
+    pub unix: Option<(std::os::unix::net::UnixListener, PathBuf)>,
+    /// While this is `false`, no new connection is accepted (they wait in the backlog); `None`
+    /// accepts always. A binary upgrade pauses the old process's admin API this way.
+    pub accepting: Option<watch::Receiver<bool>>,
 }
 
 /// The user store and the bootstrap token, which is issued only while no admin exists.
@@ -100,20 +165,34 @@ pub fn start(
     control: Arc<dyn Control>,
     stop: watch::Receiver<bool>,
 ) -> Result<Running, StartError> {
+    start_with(settings, control, stop, Sockets::default())
+}
+
+/// Like [`start`], serving `sockets` where given instead of binding (a binary upgrade adopts
+/// the previous process's listeners, so the socket file is never unlinked and rebound).
+#[allow(clippy::too_many_lines)] // the admin state, one field after another
+pub fn start_with(
+    settings: Settings,
+    control: Arc<dyn Control>,
+    stop: watch::Receiver<bool>,
+    sockets: Sockets,
+) -> Result<Running, StartError> {
     let address = settings.address;
-    let tcp = std::net::TcpListener::bind(address)
-        .and_then(|l| l.set_nonblocking(true).map(|()| l))
-        .map_err(|source| StartError::Bind { address, source })?;
+    let accepting = sockets.accepting;
+    let (tcp, socket) = listeners(&settings, sockets.tcp, sockets.unix)?;
     let tls = settings.tls.as_ref().map(acceptor).transpose()?;
-    // Without the socket the CLI falls back to the listener with an API token; a path too
-    // long for a Unix socket (about 104 bytes on macOS) must not stop the proxy.
-    let socket = settings.socket.as_deref().and_then(|path| match bind_socket(path) {
-        Ok(socket) => Some(socket),
-        Err(err) => {
-            tracing::warn!(error = %err, "the CLI socket is off; `rdock reload` and `rdock status` need --admin and RDOCK_ADMIN_TOKEN");
-            None
-        }
-    });
+    let tcp_dup = tcp.try_clone().ok();
+    let unix_dup = socket
+        .as_ref()
+        .and_then(|(l, p)| l.try_clone().ok().map(|l| (l, p.clone())));
+    let keep_socket_file = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let keep = keep_socket_file.clone();
+    let read_only = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let conn = Conn {
+        in_flight: Arc::default(),
+        read_only: read_only.clone(),
+        accepting: accepting.clone(),
+    };
     let allowed_hosts = if settings.allowed_hosts.is_empty() {
         guard::default_hosts(address.ip())
     } else {
@@ -126,16 +205,19 @@ pub fn start(
     let (users, bootstrap) = open_users(&settings.state_dir).map_err(state_error)?;
     let policy = Policy::new(&settings.passwords).map_err(state_error)?;
     let tokens = Tokens::open(&settings.state_dir).map_err(state_error)?;
-    let audit = Audit::open(
-        &settings.audit_dir,
-        settings.audit.max_file_size.as_u64(),
-        settings.audit.retention.as_std(),
-        settings.audit.forward.as_ref(),
-    )
-    .map_err(|source| StartError::State {
-        path: settings.audit_dir.clone(),
-        source,
-    })?;
+    let audit = Arc::new(
+        Audit::open(
+            &settings.audit_dir,
+            settings.audit.max_file_size.as_u64(),
+            settings.audit.retention.as_std(),
+            settings.audit.forward.as_ref(),
+        )
+        .map_err(|source| StartError::State {
+            path: settings.audit_dir.clone(),
+            source,
+        })?,
+    );
+    let audit_handle = audit.clone();
     remove_shared_token(&settings.state_dir);
     let events = Hub::start(settings.feeds.as_ref().map(|f| f.events.clone()), "events");
     audit.set_events(events.clone());
@@ -192,14 +274,69 @@ pub fn start(
                         .ok()
                         .map(|l| (l, path))
                 });
-                let served = serve(router, tcp, tls, socket, stop);
+                let served = serve(router, tcp, tls, socket, stop, conn, keep);
                 #[cfg(feature = "fault-injection")]
                 let served = with_fault(served, threads);
                 served.await;
             });
         })
         .map_err(StartError::Runtime)?;
-    Ok(Running { thread })
+    Ok(Running {
+        thread,
+        tcp: tcp_dup,
+        unix: unix_dup,
+        keep_socket_file,
+        read_only,
+        audit: audit_handle,
+    })
+}
+
+/// The TCP listener and the Unix socket: the handed-over ones where given, otherwise bound now.
+fn listeners(
+    settings: &Settings,
+    tcp: Option<std::net::TcpListener>,
+    unix: Option<(std::os::unix::net::UnixListener, PathBuf)>,
+) -> Result<
+    (
+        std::net::TcpListener,
+        Option<(std::os::unix::net::UnixListener, PathBuf)>,
+    ),
+    StartError,
+> {
+    let address = settings.address;
+    let sockets = Sockets {
+        tcp,
+        unix,
+        accepting: None,
+    };
+    let tcp = match sockets.tcp {
+        Some(tcp) => tcp
+            .set_nonblocking(true)
+            .map(|()| tcp)
+            .map_err(|source| StartError::Bind { address, source })?,
+        None => std::net::TcpListener::bind(address)
+            .and_then(|l| l.set_nonblocking(true).map(|()| l))
+            .map_err(|source| StartError::Bind { address, source })?,
+    };
+    // Without the socket the CLI falls back to the listener with an API token; a path too
+    // long for a Unix socket (about 104 bytes on macOS) must not stop the proxy.
+    let socket = match sockets.unix {
+        Some((listener, path)) => match listener.set_nonblocking(true) {
+            Ok(()) => Some((listener, path)),
+            Err(err) => {
+                tracing::warn!(error = %err, "cannot use the handed-over CLI socket");
+                None
+            }
+        },
+        None => settings.socket.as_deref().and_then(|path| match bind_socket(path) {
+            Ok(socket) => Some(socket),
+            Err(err) => {
+                tracing::warn!(error = %err, "the CLI socket is off; `rdock reload` and `rdock status` need --admin and RDOCK_ADMIN_TOKEN");
+                None
+            }
+        }),
+    };
+    Ok((tcp, socket))
 }
 
 /// Serves until `served` ends, interrupted by the fault `RDOCK_FAULT` asks for, if any.
@@ -236,7 +373,10 @@ fn acceptor(files: &crate::TlsFiles) -> Result<TlsAcceptor, StartError> {
     let index = rdock_tls::CertIndex::build(&[loaded], Some("admin"));
     let resolver = Arc::new(rdock_tls::SniResolver::new(index));
     // TLS 1.3 only: the admin API has no old clients to serve.
-    let config = rdock_tls::server_config(TlsPolicy::Modern, resolver, None)?;
+    // Fresh ticket keys of its own: the admin API shares no session with the proxy listeners.
+    let resumption = rdock_tls::Resumption::standalone()
+        .map_err(|e| StartError::Runtime(io::Error::other(e.to_string())))?;
+    let config = rdock_tls::server_config(TlsPolicy::Modern, resolver, None, &resumption)?;
     Ok(TlsAcceptor::from(config))
 }
 
@@ -277,15 +417,35 @@ async fn serve(
     tls: Option<TlsAcceptor>,
     socket: Option<Socket>,
     mut stop: watch::Receiver<bool>,
+    conn: Conn,
+    keep_socket_file: Arc<std::sync::atomic::AtomicBool>,
 ) {
     let tcp_router = router
         .clone()
         .layer(Extension(Transport::Tcp { tls: tls.is_some() }));
     let socket_router = router.layer(Extension(Transport::Socket));
     let open = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
+    let mut accepting = conn.accepting.clone();
+    let in_flight = conn.in_flight.clone();
     loop {
+        // Paused (a binary upgrade is handing over): new connections wait in the backlog.
+        if let Some(gate) = accepting.as_mut()
+            && !*gate.borrow()
+        {
+            tokio::select! {
+                changed = stop.changed() => if changed.is_err() || *stop.borrow() { break },
+                changed = gate.changed() => if changed.is_err() { accepting = None },
+            }
+            continue;
+        }
         tokio::select! {
             changed = stop.changed() => if changed.is_err() || *stop.borrow() { break },
+            changed = async {
+                match accepting.as_mut() {
+                    Some(gate) => gate.changed().await,
+                    None => std::future::pending().await,
+                }
+            } => if changed.is_err() { accepting = None },
             accepted = tcp.accept() => match accepted {
                 Ok((stream, address)) => {
                     // Over the cap the connection is closed at once: holding thousands of
@@ -296,12 +456,13 @@ async fn serve(
                     };
                     let router = tcp_router.clone();
                     let peer = Some(Peer(address));
+                    let conn = conn.clone();
                     match tls.clone() {
                         Some(acceptor) => {
                             tokio::spawn(async move {
                                 let _permit = permit;
                                 match tokio::time::timeout(HEADER_TIMEOUT, acceptor.accept(stream)).await {
-                                    Ok(Ok(stream)) => connection(stream, router, peer).await,
+                                    Ok(Ok(stream)) => connection(stream, router, peer, conn).await,
                                     Ok(Err(err)) => tracing::debug!(error = %err, "admin TLS handshake failed"),
                                     Err(_) => tracing::debug!("admin TLS handshake timed out"),
                                 }
@@ -310,7 +471,7 @@ async fn serve(
                         None => {
                             tokio::spawn(async move {
                                 let _permit = permit;
-                                connection(stream, router, peer).await;
+                                connection(stream, router, peer, conn).await;
                             });
                         }
                     }
@@ -322,7 +483,7 @@ async fn serve(
             },
             accepted = accept_socket(socket.as_ref()) => match accepted {
                 Ok(stream) => {
-                    tokio::spawn(connection(stream, socket_router.clone(), None));
+                    tokio::spawn(connection(stream, socket_router.clone(), None, conn.clone()));
                 }
                 Err(err) => {
                     tracing::warn!(error = %err, "admin socket accept failed");
@@ -331,7 +492,18 @@ async fn serve(
             },
         }
     }
-    if let Some((_, path)) = socket {
+    // Requests being answered get their answer (the reply to `rdock upgrade` among them),
+    // within a bound.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while in_flight.load(std::sync::atomic::Ordering::SeqCst) > 0
+        && tokio::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    if let Some((_, path)) = socket
+        && !keep_socket_file.load(std::sync::atomic::Ordering::SeqCst)
+    {
         let _ = std::fs::remove_file(path);
     }
 }
@@ -343,25 +515,225 @@ async fn accept_socket(socket: Option<&Socket>) -> io::Result<tokio::net::UnixSt
     }
 }
 
-async fn connection<S>(stream: S, router: Router, peer: Option<Peer>)
+/// Counts a request until its response is ready.
+struct InFlight(Arc<std::sync::atomic::AtomicUsize>);
+
+impl InFlight {
+    fn new(counter: &Arc<std::sync::atomic::AtomicUsize>) -> Self {
+        counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self(counter.clone())
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// What every connection of the admin API shares.
+#[derive(Clone)]
+struct Conn {
+    /// Requests being answered.
+    in_flight: Arc<std::sync::atomic::AtomicUsize>,
+    /// Refuse requests that change something ([`Running::set_read_only`]).
+    read_only: Arc<std::sync::atomic::AtomicBool>,
+    /// The accept gate: when it closes (a binary upgrade handed over), open connections finish
+    /// the request they are answering and close, so no later request reaches this process.
+    accepting: Option<watch::Receiver<bool>>,
+}
+
+/// Whether a request only reads.
+fn reads_only(method: &http::Method) -> bool {
+    matches!(
+        *method,
+        http::Method::GET | http::Method::HEAD | http::Method::OPTIONS
+    )
+}
+
+async fn connection<S>(stream: S, router: Router, peer: Option<Peer>, conn: Conn)
 where
     S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
+    let Conn {
+        in_flight,
+        read_only,
+        accepting,
+    } = conn;
+    // Requests this connection started, and those it is answering: when the accept gate closes,
+    // the connection may only close between requests, and not before the request it was
+    // accepted for has been read.
+    let (started_tx, mut started) = watch::channel(0u64);
+    let started_tx = Arc::new(started_tx);
+    let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let busy = active.clone();
     let service = hyper::service::service_fn(move |mut request: http::Request<Incoming>| {
         if let Some(peer) = peer {
             request.extensions_mut().insert(peer);
         }
-        router.clone().call(request)
+        started_tx.send_modify(|n| *n += 1);
+        let answering = InFlight::new(&busy);
+        let guard = InFlight::new(&in_flight);
+        let refuse =
+            read_only.load(std::sync::atomic::Ordering::SeqCst) && !reads_only(request.method());
+        let call = router.clone().call(request);
+        async move {
+            let _answering = answering;
+            if refuse {
+                drop(guard);
+                let mut response =
+                    axum::response::IntoResponse::into_response(axum::Json(serde_json::json!({
+                        "error": "a binary upgrade is handing over; try again in a few seconds"
+                    })));
+                *response.status_mut() = http::StatusCode::SERVICE_UNAVAILABLE;
+                response.headers_mut().insert(
+                    http::header::RETRY_AFTER,
+                    http::HeaderValue::from_static("5"),
+                );
+                return Ok(response);
+            }
+            let response = call.await;
+            drop(guard);
+            response
+        }
     });
     let mut builder = Builder::new(TokioExecutor::new());
     builder
         .http1()
         .timer(hyper_util::rt::TokioTimer::new())
         .header_read_timeout(HEADER_TIMEOUT);
-    if let Err(err) = builder
-        .serve_connection(TokioIo::new(stream), service)
-        .await
-    {
+    let served = builder.serve_connection(TokioIo::new(stream), service);
+    tokio::pin!(served);
+    let closed = async {
+        match accepting {
+            // A gate whose sender is gone (the process is stopping) closes nothing.
+            Some(mut gate) => {
+                if gate.wait_for(|open| !*open).await.is_err() {
+                    std::future::pending::<()>().await;
+                }
+            }
+            None => std::future::pending().await,
+        }
+    };
+    let result = tokio::select! {
+        result = &mut served => result,
+        () = closed => {
+            // hyper's graceful shutdown closes a connection at once when it has read nothing
+            // yet, or sits between two requests, which would drop a request already in the
+            // socket buffer (an accepted connection whose request is not read yet). Close only
+            // once a request is being answered: the one in progress, or the next one within
+            // the header timeout (no request in that time: none was sent).
+            let seen = *started.borrow_and_update();
+            if active.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                let next = tokio::time::timeout(
+                    HEADER_TIMEOUT,
+                    started.wait_for(|n| *n > seen),
+                );
+                tokio::select! {
+                    result = &mut served => {
+                        if let Err(err) = result {
+                            tracing::debug!(error = %err, "admin connection ended with an error");
+                        }
+                        return;
+                    }
+                    _ = next => {}
+                }
+            }
+            served.as_mut().graceful_shutdown();
+            served.await
+        }
+    };
+    if let Err(err) = result {
         tracing::debug!(error = %err, "admin connection ended with an error");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    fn conn(gate: watch::Receiver<bool>) -> Conn {
+        Conn {
+            in_flight: Arc::new(AtomicUsize::new(0)),
+            read_only: Arc::new(AtomicBool::new(false)),
+            accepting: Some(gate),
+        }
+    }
+
+    fn router() -> Router {
+        Router::new().route("/", axum::routing::get(|| async { "ok" }))
+    }
+
+    async fn read_answer(stream: &mut tokio::io::DuplexStream) -> String {
+        let mut out = Vec::new();
+        let mut buf = [0u8; 1024];
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            let read = tokio::time::timeout_at(deadline, stream.read(&mut buf))
+                .await
+                .expect("an answer within 30 s")
+                .expect("a read");
+            if read == 0 {
+                break;
+            }
+            out.extend_from_slice(&buf[..read]);
+            let text = String::from_utf8_lossy(&out);
+            if text.contains("\r\n\r\n") && text.ends_with("ok") {
+                break;
+            }
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    }
+
+    /// The handover closes the accept gate while a connection was accepted but its request not
+    /// read yet: the request is answered, not dropped (hyper's graceful shutdown alone closes
+    /// such a connection at once).
+    #[tokio::test]
+    async fn a_request_accepted_before_the_gate_closed_is_answered() {
+        for _ in 0..32 {
+            let (gate_tx, gate) = watch::channel(false);
+            let (mut client, server) = tokio::io::duplex(4096);
+            client
+                .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            let task = tokio::spawn(connection(server, router(), None, conn(gate)));
+            let answer = read_answer(&mut client).await;
+            assert!(answer.starts_with("HTTP/1.1 200"), "{answer:?}");
+            task.await.unwrap();
+            drop(gate_tx);
+        }
+    }
+
+    /// A kept-alive connection between two requests when the gate closes: its next request
+    /// is answered too, and the connection closes after it.
+    #[tokio::test]
+    async fn the_next_request_on_a_kept_alive_connection_is_answered() {
+        let (gate_tx, gate) = watch::channel(true);
+        let (mut client, server) = tokio::io::duplex(4096);
+        let task = tokio::spawn(connection(server, router(), None, conn(gate)));
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let first = read_answer(&mut client).await;
+        assert!(first.starts_with("HTTP/1.1 200"), "{first:?}");
+        gate_tx.send_replace(false);
+        tokio::task::yield_now().await;
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let second = read_answer(&mut client).await;
+        assert!(second.starts_with("HTTP/1.1 200"), "{second:?}");
+        // No keep-alive after the gate closed: the connection ends.
+        let mut rest = Vec::new();
+        tokio::time::timeout(Duration::from_secs(30), client.read_to_end(&mut rest))
+            .await
+            .unwrap()
+            .unwrap();
+        task.await.unwrap();
     }
 }

@@ -37,6 +37,41 @@ impl Checkers {
             if let Some(check) = service.health.active.clone() {
                 tasks.spawn(run(service.clone(), check, client.clone(), metrics.clone()));
             }
+            if service
+                .health
+                .passive
+                .as_ref()
+                .is_some_and(|p| p.outlier.is_some())
+            {
+                tasks.spawn(detect_outliers(service.clone(), metrics.clone()));
+            }
+        }
+    }
+}
+
+/// Runs the outlier detectors of `service` once per interval (H-LB-02, ADR-0031). The counts
+/// live in the backend state, so a reload that restarts this task keeps them.
+async fn detect_outliers(service: Arc<ServiceRuntime>, metrics: Metrics) {
+    let Some((passive, (detectors, interval))) = service
+        .health
+        .passive
+        .as_ref()
+        .and_then(|p| Some((p, p.outlier?)))
+    else {
+        return;
+    };
+    loop {
+        tokio::time::sleep(interval).await;
+        // The member list keeps the pool in step with DNS and the configuration.
+        let _ = service.members();
+        let found = service.pool.detect_outliers(
+            &detectors,
+            passive.policy,
+            passive.max_percent,
+            Instant::now(),
+        );
+        for (backend, detector, result) in found {
+            crate::proxy::outlier_ejected(&service, &backend, detector, result, &metrics);
         }
     }
 }

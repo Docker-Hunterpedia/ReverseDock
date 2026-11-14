@@ -20,24 +20,43 @@ ReverseDock reads one YAML or JSON file, `/etc/rdock/rdock.yaml` by default (`--
 - [`admin`](/docs/reference/configuration/admin/): Admin API and dashboard.
 - [`caches`](/docs/reference/configuration/caches/): HTTP cache stores, used by `cache` middlewares.
 - [`certificates`](/docs/reference/configuration/certificates/): Certificates you provide yourself.
+- [`cluster`](/docs/reference/configuration/cluster/): Membership of a cluster (H-HA-01…03): the control plane this data plane takes its
 - [`consumers`](/docs/reference/configuration/consumers/): API clients and users that requests are attributed to, with their API keys (stored
+- [`control`](/docs/reference/configuration/control/): The control plane's own settings, read only by `rdock control run`.
 - [`defaults`](/docs/reference/configuration/defaults/): Defaults applied to routes that do not set a value.
+- [`geoip`](/docs/reference/configuration/geoip/): GeoIP databases for `ClientCountry`, `ClientContinent` and `ClientASN` (H-SEC-04). No
 - [`lifecycle`](/docs/reference/configuration/lifecycle/): Start-up and shutdown behaviour.
 - [`listeners`](/docs/reference/configuration/listeners/): Sockets to accept traffic on. When empty, `web` (`:80`) and `websecure` (`:443`, TLS)
+- [`locality`](/docs/reference/configuration/locality/): The proxy's own zone and whether services prefer backends in it (H-HA-05).
 - [`middlewares`](/docs/reference/configuration/middlewares/): Reusable request and response policies.
 - [`observability`](/docs/reference/configuration/observability/): Logs, metrics and traces.
 - [`providers`](/docs/reference/configuration/providers/): Dynamic configuration sources (file, Docker, Swarm, Kubernetes).
 - [`routes`](/docs/reference/configuration/routes/): HTTP routes: which requests go to which service, through which middlewares.
+- [`runtime`](/docs/reference/configuration/runtime/): The proxy's worker threads; read at start, so a change needs a restart.
 - [`secrets`](/docs/reference/configuration/secrets/): External secret stores that secret fields can reference (`${vault:…}`).
 - [`security`](/docs/reference/configuration/security/): Client IP trust and request limits.
 - [`services`](/docs/reference/configuration/services/): Backend pools that routes send traffic to.
 - [`tcp_routes`](/docs/reference/configuration/tcp-routes/): TCP routes (SNI routing, passthrough, plain TCP).
 - [`tcp_services`](/docs/reference/configuration/tcp-services/): TCP backend pools.
+- [`tenants`](/docs/reference/configuration/tenants/): Tenants of the admin API (H-SEC-07): API tokens and users scoped to a tenant read and
 - [`udp_routes`](/docs/reference/configuration/udp-routes/): UDP routes: which `udp` listener's datagrams go to which UDP service.
 - [`udp_services`](/docs/reference/configuration/udp-services/): UDP backend pools.
+- [`upgrade`](/docs/reference/configuration/upgrade/): In-place binary upgrades (`rdock upgrade`, `SIGUSR2`): the binary, the drain bound and
 - [`version`](/docs/reference/configuration/version/): Configuration format version. Only `1` exists; omit it to use the latest.
 
 ## Value types
+
+### AbuseEvent
+
+
+
+Examples: `401`, `4xx`, `auth_failure`
+
+### AbuseKey
+
+
+
+Examples: `client_ip`, `ja4`
 
 ### AcmeSetting
 
@@ -63,6 +82,10 @@ Examples: `32KiB`, `100MiB`, `1048576`
 
 A certificate authority.
 
+### DrainLimit
+
+A duration, or `unlimited`.
+
 ### Duration
 
 Duration made of numbers with units: ms, s, m, h, d.
@@ -74,6 +97,16 @@ Examples: `10s`, `250ms`, `1h30m`
 
 
 Examples: `unix:///var/run/docker.sock`, `tcp://socket-proxy:2375`
+
+### Factor
+
+A number with up to three decimals, such as 1.4.
+
+Examples: `1.4`
+
+### FloodLimit
+
+A number, or `unlimited` to remove the limit.
 
 ### HttpUrl
 
@@ -110,6 +143,10 @@ TLS of a route.
 ### SessionLimit
 
 A number of sessions (at least 1), or `unlimited`.
+
+### SlowStart
+
+Time to full weight, such as `30s`, or every setting.
 
 ### TrustedProxy
 

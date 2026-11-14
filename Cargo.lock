@@ -48,17 +48,6 @@ dependencies = [
 
 [[package]]
 name = "ahash"
-version = "0.7.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "891477e0c6a8957309ee5c45a6368af3ae14bb510732d2684ffa19af310920f9"
-dependencies = [
- "getrandom 0.2.17",
- "once_cell",
- "version_check",
-]
-
-[[package]]
-name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a15f179cd60c4584b8a8c596927aadc462e27f2ca70c04e0071964a73ba7a75"
@@ -1580,7 +1569,7 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf5efcf77a4da27927d3ab0509dec5b0954bb3bc59da5a1de9e52642ebd4cdf9"
 dependencies = [
- "ahash 0.8.12",
+ "ahash",
  "num_cpus",
  "parking_lot",
  "seize",
@@ -1739,8 +1728,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "wasi",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1764,9 +1755,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 6.0.0",
  "rand_core 0.10.1",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1844,13 +1837,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "h3"
+version = "0.0.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10872b55cfb02a821b69dc7cf8dc6a71d6af25eb9a79662bec4a9d016056b3be"
+dependencies = [
+ "bytes",
+ "fastrand",
+ "futures-util",
+ "http",
+ "pin-project-lite",
+ "tokio",
+]
+
+[[package]]
+name = "h3-quinn"
+version = "0.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b2e732c8d91a74731663ac8479ab505042fbf547b9a207213ab7fbcbfc4f8b4"
+dependencies = [
+ "bytes",
+ "futures",
+ "h3",
+ "quinn",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
-dependencies = [
- "ahash 0.7.8",
-]
 
 [[package]]
 name = "hashbrown"
@@ -2427,6 +2445,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ipnetwork"
+version = "0.21.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf370abdafd54d13e54a620e8c3e1145f28e46cc9d704bc6d94414559df41763"
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2593,7 +2617,7 @@ version = "0.60.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a42a11b47492e6a2cc76e9c7bcc8077776cb31dac444e0795d7f61bcc6441c08"
 dependencies = [
- "ahash 0.8.12",
+ "ahash",
  "bytecount",
  "data-encoding",
  "email_address",
@@ -2630,7 +2654,7 @@ version = "0.60.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e281d6b177bb4834f2ffd6f92aa0443cffe29c996b251c8d94eb6f456186feba"
 dependencies = [
- "ahash 0.8.12",
+ "ahash",
  "bytecount",
  "fraction",
  "getrandom 0.3.4",
@@ -2762,7 +2786,7 @@ version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9dea60005024b6ec1819c426209aa29b9eaca64f6b3988ab73c55f43fa484392"
 dependencies = [
- "ahash 0.8.12",
+ "ahash",
  "async-broadcast",
  "async-stream",
  "backon",
@@ -2892,6 +2916,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "lru-slab"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
+
+[[package]]
 name = "mach2"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2914,6 +2944,18 @@ name = "matchit"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
+
+[[package]]
+name = "maxminddb"
+version = "0.32.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b43d2458d977b610b04a3858e6504f06133663d303a1a0606601b530bfc9bc6"
+dependencies = [
+ "ipnetwork",
+ "memchr",
+ "serde",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "maybe-owned"
@@ -3614,7 +3656,7 @@ version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1d28a5c622b0a2fba57117f0b313c62eb1e0b8c73ea5ebe75d4cc0fc83c9c08"
 dependencies = [
- "ahash 0.8.12",
+ "ahash",
  "arrayvec",
  "async-trait",
  "blake2 0.10.6",
@@ -3650,7 +3692,7 @@ version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a535f47f65fdcb003f9e1df04cd18e614c128dfe9388acce3f211ae38ac14d68"
 dependencies = [
- "ahash 0.8.12",
+ "ahash",
  "async-trait",
  "brotli",
  "bstr",
@@ -3768,11 +3810,11 @@ version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0f20e42e8c8822a2518ccbd6e2dce90a27132d87a29815ca601ce9eafd9f7425"
 dependencies = [
- "ahash 0.7.8",
+ "ahash",
  "arrayvec",
  "async-channel",
  "flurry",
- "hashbrown 0.12.3",
+ "hashbrown 0.17.1",
  "log",
  "parking_lot",
  "rand 0.8.8",
@@ -4104,6 +4146,63 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
 
 [[package]]
+name = "quinn"
+version = "0.11.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4051e23e9185c255a7e33ef59cdbca87a22d359052eecd22fc6b901fb37d9d11"
+dependencies = [
+ "bytes",
+ "cfg_aliases",
+ "futures-io",
+ "pin-project-lite",
+ "quinn-proto",
+ "quinn-udp",
+ "rustc-hash",
+ "rustls",
+ "socket2",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "web-time",
+]
+
+[[package]]
+name = "quinn-proto"
+version = "0.11.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e750cca55fe4f0439a15d0bb529da9651e79993e8e72c61a899a36d462befbe"
+dependencies = [
+ "bytes",
+ "getrandom 0.4.3",
+ "lru-slab",
+ "rand 0.10.3",
+ "rand_pcg",
+ "ring",
+ "rustc-hash",
+ "rustls",
+ "rustls-pki-types",
+ "slab",
+ "thiserror 2.0.21",
+ "tinyvec",
+ "tracing",
+ "web-time",
+]
+
+[[package]]
+name = "quinn-udp"
+version = "0.5.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af66907df18639dcf4db56ca65490cabc4b27a97dbadd96f2926cca73298f016"
+dependencies = [
+ "cfg_aliases",
+ "libc",
+ "once_cell",
+ "socket2",
+ "tracing",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4207,6 +4306,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
+name = "rand_pcg"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "caa0f4137e1c0a72f4c651489402276c8e8e1cf081f3b0ba156d2cbeef09e86a"
+dependencies = [
+ "rand_core 0.10.1",
+]
+
+[[package]]
 name = "rand_xorshift"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4242,6 +4350,7 @@ dependencies = [
  "clap",
  "flate2",
  "futures-util",
+ "h2",
  "http",
  "http-body-util",
  "hyper",
@@ -4256,9 +4365,12 @@ dependencies = [
  "rdock-balancer",
  "rdock-cache",
  "rdock-cloudflare",
+ "rdock-cluster",
  "rdock-config",
+ "rdock-control",
  "rdock-credentials",
  "rdock-dns-providers",
+ "rdock-limits",
  "rdock-middleware",
  "rdock-migrate",
  "rdock-model",
@@ -4269,8 +4381,10 @@ dependencies = [
  "rdock-provider-swarm",
  "rdock-proxy",
  "rdock-testkit",
+ "rdock-tls",
  "rdock-wasm",
  "ring",
+ "rustix",
  "rustls",
  "rustls-pki-types",
  "sd-notify",
@@ -4278,7 +4392,10 @@ dependencies = [
  "serde-saphyr",
  "serde_json",
  "serde_path_to_error",
+ "stats_alloc",
  "tempfile",
+ "thiserror 2.0.21",
+ "tikv-jemallocator",
  "tokio",
  "tokio-tungstenite",
  "tracing",
@@ -4301,10 +4418,13 @@ dependencies = [
  "hyper-util",
  "instant-acme",
  "rcgen",
+ "rdock-cluster",
  "rdock-config",
  "rdock-model",
  "rdock-observability",
+ "rdock-testkit",
  "rdock-tls",
+ "ring",
  "rustls",
  "rustls-pki-types",
  "serde",
@@ -4417,6 +4537,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "rdock-cluster"
+version = "0.8.0-alpha.1"
+dependencies = [
+ "async-trait",
+ "base64 0.23.1",
+ "bytes",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "rcgen",
+ "rdock-limits",
+ "rdock-testkit",
+ "ring",
+ "rustls",
+ "rustls-pki-types",
+ "rustls-platform-verifier",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+ "x509-parser 0.18.1",
+ "zstd",
+]
+
+[[package]]
 name = "rdock-config"
 version = "0.8.0-alpha.1"
 dependencies = [
@@ -4431,12 +4581,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "rdock-control"
+version = "0.8.0-alpha.1"
+dependencies = [
+ "base64 0.23.1",
+ "bytes",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "rcgen",
+ "rdock-cluster",
+ "rdock-credentials",
+ "rdock-model",
+ "rdock-observability",
+ "ring",
+ "rustls",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "time",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+ "x509-parser 0.18.1",
+ "zstd",
+]
+
+[[package]]
 name = "rdock-credentials"
 version = "0.8.0-alpha.1"
 dependencies = [
+ "base64 0.23.1",
+ "blake2 0.11.0",
  "crc32fast",
  "ring",
  "subtle",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -4473,6 +4656,7 @@ dependencies = [
 name = "rdock-limits"
 version = "0.8.0-alpha.1"
 dependencies = [
+ "fastrand",
  "serde",
  "serde_json",
  "tempfile",
@@ -4588,6 +4772,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "rdock-perreq"
+version = "0.8.0-alpha.1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "rdock-testkit",
+ "rustls",
+ "rustls-pki-types",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-rustls",
+]
+
+[[package]]
 name = "rdock-plugin-api"
 version = "0.1.0"
 dependencies = [
@@ -4699,15 +4898,18 @@ dependencies = [
  "bytes",
  "fastrand",
  "futures-util",
+ "h3",
  "hickory-resolver",
  "http",
  "http-body-util",
  "httpdate",
  "ipnet",
  "jsonschema",
+ "maxminddb",
  "opentelemetry",
  "pingora",
  "proxy-header",
+ "quinn",
  "rdock-balancer",
  "rdock-cache",
  "rdock-config",
@@ -4725,6 +4927,7 @@ dependencies = [
  "rustls-pki-types",
  "serde",
  "serde_json",
+ "socket2",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -4752,12 +4955,15 @@ dependencies = [
  "bytes",
  "futures-util",
  "h2",
+ "h3",
+ "h3-quinn",
  "http",
  "http-body-util",
  "hyper",
  "hyper-util",
  "percent-encoding",
  "proxy-header",
+ "quinn",
  "rcgen",
  "rdock-acme",
  "ring",
@@ -4765,9 +4971,11 @@ dependencies = [
  "rustls-pki-types",
  "serde_json",
  "tempfile",
+ "time",
  "tokio",
  "tokio-rustls",
  "tokio-tungstenite",
+ "x509-parser 0.18.1",
 ]
 
 [[package]]
@@ -4775,12 +4983,16 @@ name = "rdock-tls"
 version = "0.8.0-alpha.1"
 dependencies = [
  "arc-swap",
+ "base64 0.23.1",
+ "md-5",
  "pkcs8",
  "proptest",
  "rcgen",
  "rdock-model",
+ "ring",
  "rustls",
  "rustls-pki-types",
+ "subtle",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -4794,6 +5006,7 @@ dependencies = [
  "base64 0.23.1",
  "blake2 0.11.0",
  "http",
+ "rdock-credentials",
  "rdock-plugin-api",
  "ring",
  "tempfile",
@@ -4837,7 +5050,7 @@ version = "0.60.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f42818036d3b37cda6bd4c494543158a36e431cb717015ef7c93acc6ba214d3b"
 dependencies = [
- "ahash 0.8.12",
+ "ahash",
  "fluent-uri",
  "getrandom 0.3.4",
  "hashbrown 0.17.1",
@@ -5003,9 +5216,9 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "1.1.5"
+version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d"
+checksum = "e5e76742e5294153d4dde1207dbec5bdd81eef6fabdc0d2118babadabfd858aa"
 dependencies = [
  "bitflags",
  "errno",
@@ -5079,6 +5292,7 @@ version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2f4925028c7eb5d1fcdaf196971378ed9d2c1c4efc7dc5d011256f76c99c0a96"
 dependencies = [
+ "web-time",
  "zeroize",
 ]
 
@@ -5557,6 +5771,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "stats_alloc"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c0e04424e733e69714ca1bbb9204c1a57f09f5493439520f9f68c132ad25eec"
+
+[[package]]
 name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5774,6 +5994,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ad99c4c6d32803332c548b1af0540b357b3f5fc0be8f6c6bfe8b2e6ae784070"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "tikv-jemalloc-sys"
+version = "0.7.1+5.3.1-0-g81034ce1f1373e37dc865038e1bc8eeecf559ce8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a2825c78386b4ae0314074867860ba9577875de945f05992c38815cbec327f0"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
+name = "tikv-jemallocator"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "249f09e49ab1609436f34c776e84231bead18d6a955f119f939bdc1d847561bd"
+dependencies = [
+ "libc",
+ "tikv-jemalloc-sys",
 ]
 
 [[package]]
@@ -6641,6 +6881,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "64475e2f77d6071ce90624098fc236285ddafa8c3ea1fb386f2c4154b6c2bbdb"
 dependencies = [
  "wast",
+]
+
+[[package]]
+name = "web-time"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
 ]
 
 [[package]]

@@ -16,6 +16,8 @@ pub enum ProblemKind {
     Unauthenticated,
     /// 403: the client is known but not allowed (a network rule, a group restriction).
     Forbidden,
+    /// 403: the client's key is banned for a while by an `abuse` middleware.
+    Banned,
     /// 400: the request does not match the route's schemas (`validate`); the answer lists the
     /// errors in `errors`.
     ValidationFailed,
@@ -50,6 +52,9 @@ pub enum ProblemKind {
     ServiceUnavailable,
     /// 503: the route is in maintenance.
     Maintenance,
+    /// 503: an `admission` middleware sheds load: more requests are in flight than the
+    /// backend handles well.
+    Overloaded,
     /// 401: an OIDC login could not be completed (the provider refused it, the login
     /// expired or its answer did not verify).
     LoginFailed,
@@ -61,12 +66,13 @@ pub enum ProblemKind {
 
 impl ProblemKind {
     /// Every kind, for the reference page and the tests.
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 24] = [
         Self::BadRequest,
         Self::ValidationFailed,
         Self::Unauthenticated,
         Self::LoginFailed,
         Self::Forbidden,
+        Self::Banned,
         Self::NotFound,
         Self::MethodNotAllowed,
         Self::RequestTimeout,
@@ -82,6 +88,7 @@ impl ProblemKind {
         Self::BadGateway,
         Self::ServiceUnavailable,
         Self::Maintenance,
+        Self::Overloaded,
         Self::IdentityProviderUnavailable,
         Self::GatewayTimeout,
     ];
@@ -116,7 +123,7 @@ impl ProblemKind {
         match self {
             Self::BadRequest | Self::ValidationFailed => 400,
             Self::Unauthenticated | Self::LoginFailed => 401,
-            Self::Forbidden => 403,
+            Self::Forbidden | Self::Banned => 403,
             Self::NotFound => 404,
             Self::MethodNotAllowed => 405,
             Self::RequestTimeout => 408,
@@ -129,7 +136,10 @@ impl ProblemKind {
             Self::HeadersTooLarge => 431,
             Self::InternalError => 500,
             Self::BadGateway => 502,
-            Self::ServiceUnavailable | Self::Maintenance | Self::IdentityProviderUnavailable => 503,
+            Self::ServiceUnavailable
+            | Self::Maintenance
+            | Self::Overloaded
+            | Self::IdentityProviderUnavailable => 503,
             Self::GatewayTimeout => 504,
         }
     }
@@ -144,6 +154,7 @@ impl ProblemKind {
             Self::PatchFailed => "patch-failed",
             Self::Unauthenticated => "unauthenticated",
             Self::Forbidden => "forbidden",
+            Self::Banned => "banned",
             Self::NotFound => "not-found",
             Self::MethodNotAllowed => "method-not-allowed",
             Self::RequestTimeout => "request-timeout",
@@ -157,6 +168,7 @@ impl ProblemKind {
             Self::BadGateway => "bad-gateway",
             Self::ServiceUnavailable => "service-unavailable",
             Self::Maintenance => "maintenance",
+            Self::Overloaded => "overloaded",
             Self::LoginFailed => "login-failed",
             Self::IdentityProviderUnavailable => "identity-provider-unavailable",
             Self::GatewayTimeout => "gateway-timeout",
@@ -179,6 +191,7 @@ impl ProblemKind {
             Self::PatchFailed => "Request transformation failed",
             Self::Unauthenticated => "Authentication required",
             Self::Forbidden => "Forbidden",
+            Self::Banned => "Banned",
             Self::NotFound => "Not found",
             Self::MethodNotAllowed => "Method not allowed",
             Self::RequestTimeout => "Request timeout",
@@ -192,6 +205,7 @@ impl ProblemKind {
             Self::BadGateway => "Bad gateway",
             Self::ServiceUnavailable => "Service unavailable",
             Self::Maintenance => "Down for maintenance",
+            Self::Overloaded => "Overloaded",
             Self::LoginFailed => "Login failed",
             Self::IdentityProviderUnavailable => "Identity provider unavailable",
             Self::GatewayTimeout => "Gateway timeout",
@@ -213,6 +227,9 @@ impl ProblemKind {
             }
             Self::Unauthenticated => "The request carries no valid credential for this route.",
             Self::Forbidden => "The request is not allowed on this route.",
+            Self::Banned => {
+                "Too many failed or refused requests came from this client. It is refused for a while."
+            }
             Self::NotFound => "Nothing is served at this address.",
             Self::MethodNotAllowed => "This method is not allowed at this address.",
             Self::RequestTimeout => "The request body did not arrive in time.",
@@ -230,6 +247,9 @@ impl ProblemKind {
             Self::BadGateway => "The upstream service could not be reached or answered badly.",
             Self::ServiceUnavailable => "The service cannot take the request now.",
             Self::Maintenance => "The service is down for maintenance.",
+            Self::Overloaded => {
+                "The service has more requests than it can handle well and sheds some. Retry after the time given in `Retry-After`."
+            }
             Self::LoginFailed => {
                 "The login could not be completed. Open the page again to start a new login."
             }
@@ -255,10 +275,12 @@ mod tests {
                 kind,
                 ProblemKind::QuotaExceeded
                     | ProblemKind::Maintenance
+                    | ProblemKind::Overloaded
                     | ProblemKind::ValidationFailed
                     | ProblemKind::PatchFailed
                     | ProblemKind::LoginFailed
                     | ProblemKind::IdentityProviderUnavailable
+                    | ProblemKind::Banned
             ) {
                 assert_eq!(ProblemKind::for_status(kind.status()), Some(kind));
             }

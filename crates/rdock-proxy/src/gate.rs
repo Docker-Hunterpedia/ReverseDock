@@ -43,6 +43,7 @@ impl Gate<'_> {
 }
 
 /// Reports every setting this version cannot honour.
+#[allow(clippy::too_many_lines, reason = "a flat list of independent checks")]
 pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
     let mut gate = Gate { mode, out };
     for (name, middleware) in &config.middlewares {
@@ -77,6 +78,17 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
                 );
             }
         }
+        // A cluster-wide count of requests in flight needs decrements and the cleanup of a
+        // crashed member's count (ADR-0031); `rate_limit` and `quota` share leased budgets.
+        if let rdock_model::middleware::Middleware::InFlight(f) = middleware
+            && f.scope == rdock_model::middleware::LimitScope::Cluster
+        {
+            gate.unsupported(
+                format!("{}.scope", path_key("middlewares", name)),
+                "a cluster-wide count of requests in flight (`in_flight` with `scope: cluster`)",
+                "a later version",
+            );
+        }
         // Background refresh re-runs the whole pipeline for a request no client waits on
         // (ADR-0030); `stale-while-revalidate` is honoured as plain staleness instead.
         if let rdock_model::middleware::Middleware::Cache(cache) = middleware
@@ -89,8 +101,66 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
             );
         }
     }
+    for (name, service) in &config.services {
+        // Pingora 0.9 has no QUIC connector (ADR-0032).
+        if service.scheme == rdock_model::service::Scheme::H3 {
+            gate.unsupported(
+                format!("{}.scheme", path_key("services", name)),
+                "HTTP/3 to backends (`scheme: h3`, ADR-0032): Pingora 0.9 has no QUIC connector",
+                "a later version",
+            );
+        }
+        // Pingora 0.9's `ProxyHttp` runs one upstream attempt at a time: no hook starts a
+        // second exchange while the first is open (ADR-0031). `retries.per_try_timeout`
+        // abandons a stalled attempt instead.
+        if service.hedge.is_some() {
+            gate.unsupported(
+                format!("{}.hedge", path_key("services", name)),
+                "hedged requests (`hedge`): Pingora 0.9 cannot race two upstream attempts of one request; `retries.per_try_timeout` retries a stalled attempt on another backend instead",
+                "a later version",
+            );
+        }
+    }
+    // Rolling back on the canary's health needs a health signal from data planes, which they
+    // do not send yet (ADR-0031); a refusal or a silent canary halts the rollout.
+    if config
+        .control
+        .as_ref()
+        .is_some_and(|c| c.rollout.auto_rollback)
+    {
+        gate.unsupported(
+            "control.rollout.auto_rollback",
+            "automatic rollback on the canary's health (`auto_rollback`)",
+            "a later version",
+        );
+    }
+    check_tenants(config, &mut gate);
+    // `control` belongs to `rdock control run`; a data plane never reads it.
+    if config.control.is_some() && mode == Mode::Run {
+        gate.out.push(
+            Diagnostic::error("control", "`rdock run` does not read `control`: the control plane runs with `rdock control run`")
+                .with_hint("remove `control` from a data plane's file"),
+        );
+    }
     for (name, listener) in config.effective_listeners().iter() {
         let path = path_key("listeners", name);
+        // The handshake bound covers `https` listeners; a `tcp` listener that terminates TLS
+        // does its handshake inside the relay (ADR-0031).
+        if listener.effective_protocol() == ListenerProtocol::Tcp
+            && listener
+                .tls
+                .as_ref()
+                .is_some_and(|t| t.max_handshakes.is_some())
+        {
+            gate.unsupported(
+                format!("{path}.tls.max_handshakes"),
+                "`tls.max_handshakes` on `tcp` listeners",
+                "a later version",
+            );
+        }
+        if let Some(h3) = &listener.http3 {
+            check_http3(&mut gate, &path, listener, h3);
+        }
         // The PROXY protocol specification defines no framing for datagrams (ADR-0030).
         if listener.effective_protocol() == ListenerProtocol::Udp
             && listener.proxy_protocol.is_some()
@@ -100,6 +170,118 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
                 "PROXY protocol on UDP listeners",
                 "a later version",
             );
+        }
+    }
+}
+
+/// HTTP/3 (experimental, ADR-0032): built only with the `http3` cargo feature; the parts of
+/// QUIC and HTTP/3 the experimental contract leaves out are planned.
+fn check_http3(
+    gate: &mut Gate<'_>,
+    path: &str,
+    listener: &rdock_model::config::Listener,
+    h3: &rdock_model::config::ListenerHttp3,
+) {
+    if h3.enabled && !crate::http3::ENABLED {
+        gate.not_built(
+            format!("{path}.http3.enabled"),
+            "HTTP/3 (`http3.enabled`)",
+            crate::http3::DISABLED_MESSAGE,
+        );
+    }
+    let planned = [
+        (
+            h3.qlog.is_some(),
+            "qlog",
+            "qlog traces of HTTP/3 connections (`qlog`, ADR-0032): quinn's `qlog` feature would switch serde_json to `preserve_order` for the whole binary",
+        ),
+        (
+            h3.early_data,
+            "early_data",
+            "0-RTT early data on HTTP/3 (`early_data`, ADR-0032): early data can be replayed",
+        ),
+        (
+            h3.migration,
+            "migration",
+            "active connection migration on HTTP/3 (`migration`, ADR-0032)",
+        ),
+        (
+            h3.datagrams,
+            "datagrams",
+            "HTTP/3 datagrams (`datagrams`, ADR-0032)",
+        ),
+        (
+            h3.webtransport,
+            "webtransport",
+            "WebTransport over HTTP/3 (`webtransport`, ADR-0032)",
+        ),
+        (
+            h3.extended_connect,
+            "extended_connect",
+            "extended CONNECT on HTTP/3: WebSocket over HTTP/3 and CONNECT-UDP (`extended_connect`, ADR-0032)",
+        ),
+    ];
+    for (set, field, what) in planned {
+        if set {
+            gate.unsupported(format!("{path}.http3.{field}"), what, "a later version");
+        }
+    }
+    // The ClientHello of a QUIC connection is not read for fingerprints, so a route that
+    // matches or denies on them would be bypassed over HTTP/3.
+    if h3.enabled
+        && listener
+            .tls
+            .as_ref()
+            .is_some_and(|t| t.fingerprint.is_some())
+    {
+        gate.unsupported(
+            format!("{path}.http3.enabled"),
+            "TLS fingerprints of HTTP/3 connections (`tls.fingerprint` with `http3`, ADR-0032)",
+            "a later version",
+        );
+    }
+    // The QUIC socket would take connections that carry no PROXY header, so the trusted-source
+    // rule of `proxy_protocol` would not hold for them.
+    if h3.enabled && listener.proxy_protocol.is_some() {
+        gate.unsupported(
+            format!("{path}.http3.enabled"),
+            "PROXY protocol on the QUIC socket of an HTTP/3 listener (`proxy_protocol` with `http3`, ADR-0032)",
+            "a later version",
+        );
+    }
+}
+
+/// Tenants scope the admin API only (ADR-0031); what a tenant would own on the data plane or
+/// in the dashboard is planned.
+fn check_tenants(config: &Config, gate: &mut Gate<'_>) {
+    for (name, tenant) in &config.tenants {
+        let path = path_key("tenants", name);
+        let planned = [
+            (
+                !tenant.listeners.is_empty(),
+                "listeners",
+                "tenant-owned listeners",
+            ),
+            (
+                !tenant.certificates.is_empty(),
+                "certificates",
+                "tenant-owned certificates",
+            ),
+            (
+                tenant.metrics_label,
+                "metrics_label",
+                "a tenant label on the core metrics",
+            ),
+            (
+                tenant.dashboard,
+                "dashboard",
+                "a dashboard view limited to a tenant",
+            ),
+        ];
+        for (set, field, what) in planned {
+            if set {
+                gate.unsupported(format!("{path}.{field}"), what, "a later version");
+            }
         }
     }
 }
@@ -115,6 +297,105 @@ mod tests {
         let mut out = Vec::new();
         check(&config, mode, &mut out);
         out
+    }
+
+    #[test]
+    fn hedging_is_planned_and_says_why() {
+        let yaml = r"
+routes:
+  app: { match: 'Host(`a`)', service: app }
+services:
+  app:
+    backends: [{ address: '127.0.0.1:1' }]
+    hedge: { delay: 50ms }
+";
+        let run = diagnostics(yaml, Mode::Run);
+        assert_eq!(run.len(), 1, "{run:?}");
+        assert!(run[0].is_error());
+        assert_eq!(run[0].path, "services.app.hedge");
+        assert!(run[0].message.contains("cannot race two upstream attempts"));
+        assert!(run[0].message.ends_with("(planned for a later version)"));
+        let validate = diagnostics(yaml, Mode::Validate);
+        assert!(!validate[0].is_error());
+    }
+
+    #[test]
+    fn cluster_scoped_in_flight_and_automatic_rollback_are_planned() {
+        let yaml = r"
+middlewares:
+  slots: { type: in_flight, amount: 4, scope: cluster }
+  shared: { type: rate_limit, average: 10, scope: cluster }
+";
+        let run = diagnostics(yaml, Mode::Run);
+        assert_eq!(run.len(), 1, "{run:?}");
+        assert_eq!(run[0].path, "middlewares.slots.scope");
+        assert!(run[0].is_error());
+        let run = diagnostics("control:\n  rollout: { auto_rollback: true }\n", Mode::Run);
+        assert!(
+            run.iter()
+                .any(|d| d.path == "control.rollout.auto_rollback" && d.is_error()),
+            "{run:?}"
+        );
+        let validate = diagnostics(
+            "control:\n  rollout: { auto_rollback: true }\n",
+            Mode::Validate,
+        );
+        assert!(validate.iter().all(|d| !d.is_error()), "{validate:?}");
+    }
+
+    #[test]
+    fn tenant_owned_listeners_certificates_metrics_and_dashboards_are_planned() {
+        let yaml = r#"
+tenants:
+  acme:
+    hosts: ["acme.example.com"]
+    listeners: [web]
+    certificates: [acme]
+    metrics_label: true
+    dashboard: true
+  globex: { hosts: ["globex.example.com"] }
+"#;
+        let run = diagnostics(yaml, Mode::Run);
+        let paths: Vec<&str> = run.iter().map(|d| d.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "tenants.acme.listeners",
+                "tenants.acme.certificates",
+                "tenants.acme.metrics_label",
+                "tenants.acme.dashboard"
+            ]
+        );
+        assert!(run.iter().all(Diagnostic::is_error));
+        assert!(
+            diagnostics(yaml, Mode::Validate)
+                .iter()
+                .all(|d| !d.is_error())
+        );
+    }
+
+    #[test]
+    fn the_handshake_bound_on_tcp_listeners_is_planned() {
+        let yaml = "listeners:\n  raw: { address: \":5432\", protocol: tcp, tls: { max_handshakes: 8 } }\n  web: { address: \":443\", tls: { max_handshakes: 8 } }\n";
+        let run = diagnostics(yaml, Mode::Run);
+        assert_eq!(run.len(), 1, "{run:?}");
+        assert_eq!(run[0].path, "listeners.raw.tls.max_handshakes");
+        assert!(run[0].is_error() && run[0].message.ends_with("(planned for a later version)"));
+    }
+
+    #[test]
+    fn a_data_plane_refuses_the_control_section_and_validate_accepts_it() {
+        let yaml = "control: { listener: \"127.0.0.1:7443\" }\n";
+        let run = diagnostics(yaml, Mode::Run);
+        assert_eq!(run.len(), 1, "{run:?}");
+        assert!(run[0].is_error() && run[0].path == "control");
+        assert!(run[0].message.contains("rdock control run"));
+        assert_eq!(diagnostics(yaml, Mode::Validate).len(), 0);
+        let member = "cluster: { store: { type: directory, path: /shared } }\n";
+        assert!(
+            diagnostics(member, Mode::Run).is_empty(),
+            "the cluster is built"
+        );
     }
 
     #[test]
@@ -150,6 +431,59 @@ mod tests {
             diagnostics(yaml, Mode::Validate)
                 .iter()
                 .all(|d| !d.is_error())
+        );
+    }
+
+    #[test]
+    fn http3_needs_the_feature_and_its_left_out_parts_are_planned() {
+        let yaml = "listeners:\n  web: { address: \":443\", tls: {}, http3: { enabled: true } }\n";
+        let run = diagnostics(yaml, Mode::Run);
+        if crate::http3::ENABLED {
+            assert!(run.is_empty(), "{run:?}");
+        } else {
+            assert_eq!(run.len(), 1, "{run:?}");
+            assert_eq!(run[0].path, "listeners.web.http3.enabled");
+            assert!(run[0].is_error());
+            assert_eq!(
+                run[0].message,
+                "HTTP/3 (`http3.enabled`): this build does not include HTTP/3; build with --features http3"
+            );
+            assert!(
+                diagnostics(yaml, Mode::Validate)
+                    .iter()
+                    .all(|d| !d.is_error())
+            );
+        }
+        // Off, nothing is refused in any build.
+        let off = "listeners:\n  web: { address: \":443\", tls: {}, http3: { enabled: false } }\n";
+        assert_eq!(diagnostics(off, Mode::Run), Vec::new());
+        let planned = "listeners:\n  web: { address: \":443\", tls: { fingerprint: {} }, proxy_protocol: { trusted: [10.0.0.0/8] }, http3: { enabled: true, qlog: /tmp/q, early_data: true, migration: true, datagrams: true, webtransport: true, extended_connect: true } }\nservices:\n  s: { scheme: h3, backends: [{ address: \"s:443\" }] }\n";
+        let run = diagnostics(planned, Mode::Run);
+        let mut paths: Vec<&str> = run
+            .iter()
+            .filter(|d| d.message.ends_with("(planned for a later version)"))
+            .map(|d| d.path.as_str())
+            .collect();
+        paths.sort_unstable();
+        assert_eq!(
+            paths,
+            [
+                "listeners.web.http3.datagrams",
+                "listeners.web.http3.early_data",
+                "listeners.web.http3.enabled",
+                "listeners.web.http3.enabled",
+                "listeners.web.http3.extended_connect",
+                "listeners.web.http3.migration",
+                "listeners.web.http3.qlog",
+                "listeners.web.http3.webtransport",
+                "services.s.scheme",
+            ]
+        );
+        assert!(run.iter().all(Diagnostic::is_error));
+        assert!(
+            run.iter()
+                .filter(|d| d.message.contains("planned"))
+                .all(|d| d.message.contains("ADR-0032"))
         );
     }
 

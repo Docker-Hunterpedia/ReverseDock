@@ -122,7 +122,7 @@ Together: CPU per request from 139 to 76 µs, and twice the peak in most scenari
 - One machine, 2 CPUs, 1 KiB responses. Other hardware gives other numbers. Compare proxies within one run, never across runs.
 - Run-to-run noise is about 10 %. NGINX's single-backend peak was 22,638 in one session and 24,889 in the next, on the same machine.
 - HAProxy is faster on plain proxying. That is the honest number, and it is tracked, not hidden.
-- Bigger machines (4 and 8 CPUs) are not measured yet.
+- Bigger machines (4 and 8 CPUs) are not measured on dedicated hardware yet. A CPU-scaling mode exists (rdock pinned to 1, 2 and 4 CPUs of a shared 4-vCPU runner, run by hand); at 4 CPUs the load generator shares the cores with the proxy, so that figure would be a lower bound, and no result from it is published here.
 
 ## Run it yourself
 
@@ -134,6 +134,8 @@ SCENARIO=tls-new PROXIES="rdock haproxy" VERSION=mine ./run.sh
 ```
 
 The soak test (24 hours at 1,000 req/s with reloads, a backend going down every 15 minutes and certificate changes) lives in [`benchmarks/soak/`](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/benchmarks/soak). The v0.5 release candidate [passed it](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/benchmarks/results/2026-11-02-small-cpu/soak/report.md) with the admin side on: 86 million requests, none failed, memory +0.3 MiB after warm-up at 62 MiB, every one of 287 reloads applied, p99 per 10-minute window between 0.30 and 0.89 ms.
+
+Since v0.9 a second soak runs weekly on a free GitHub-hosted runner ([`benchmarks/soak/hosted/`](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/benchmarks/soak/hosted)): about 5 hours 20 minutes at 400 req/s with a reload every 5 minutes, a binary upgrade every 30 minutes in the first half, a WebSocket and an event stream held open, and a check that memory, file descriptors and threads do not keep rising. It stands in for the 24-hour soak on a dedicated machine, which is still open: a shared runner's timing varies, and a 5-hour window only sees leaks of about 1 MiB an hour or more on a 100 MiB process. A failing run is a reason to look, not a published result.
 
 ## Related
 

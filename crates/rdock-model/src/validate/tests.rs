@@ -2059,3 +2059,1434 @@ fn provider_objects_hold_no_references_in_secret_fields() {
         );
     }
 }
+
+#[test]
+fn ticket_rotation_and_cache_size_are_bounded() {
+    let config = with(
+        app(),
+        json!({ "listeners": {
+            "a": { "address": ":443", "tls": { "tickets": { "rotate": "100h" }, "session_cache": { "size": 2_000_000 } } },
+            "b": { "address": ":8443", "tls": { "tickets": { "enabled": false, "key_file": "/k" } } },
+            "c": { "address": ":9443", "tls": { "tickets": { "rotate": "1h", "key_file": "/k" }, "session_cache": { "size": 0 } } }
+        }}),
+    );
+    let found = errors(config.clone());
+    assert!(has(
+        &found,
+        "listeners.a.tls.tickets.rotate",
+        "between 1s and 84h"
+    ));
+    assert!(has(&found, "listeners.a.tls.session_cache.size", "at most"));
+    assert!(!found.iter().any(|(p, _)| p.starts_with("listeners.c")));
+    assert!(has(
+        &warnings(config),
+        "listeners.b.tls.tickets.key_file",
+        "not read"
+    ));
+}
+
+#[test]
+fn http2_settings_follow_rfc_9113_and_floods_need_unlimited() {
+    let config = with(
+        app(),
+        json!({ "listeners": {
+            "a": { "address": ":443", "tls": {}, "http2": {
+                "max_concurrent_streams": 1_000_000,
+                "initial_stream_window": 2_147_483_648_u64,
+                "max_frame_size": 1024,
+                "max_local_error_reset_streams": 0
+            } },
+            "b": { "address": ":80", "http2": { "max_pending_accept_reset_streams": "unlimited", "max_frame_size": 16_777_215 } },
+            "c": { "address": ":5432", "protocol": "tcp", "http2": {} }
+        }}),
+    );
+    let found = errors(config.clone());
+    assert!(has(
+        &found,
+        "listeners.a.http2.max_concurrent_streams",
+        "write `unlimited`"
+    ));
+    assert!(has(
+        &found,
+        "listeners.a.http2.initial_stream_window",
+        "between 1 and 2147483647"
+    ));
+    assert!(has(
+        &found,
+        "listeners.a.http2.max_frame_size",
+        "between 16384 and 16777215"
+    ));
+    assert!(has(
+        &found,
+        "listeners.a.http2.max_local_error_reset_streams",
+        "greater than zero"
+    ));
+    assert!(!found.iter().any(|(p, _)| p.starts_with("listeners.b")));
+    assert!(has(&found, "listeners.c.http2", "`http` and `https`"));
+    assert!(has(
+        &warnings(config),
+        "listeners.b.http2.max_pending_accept_reset_streams",
+        "floods"
+    ));
+}
+
+#[test]
+fn upgrade_settings_are_checked() {
+    let config = with(
+        app(),
+        json!({ "upgrade": {
+            "binary": "rdock",
+            "drain": "unlimited",
+            "start_timeout": "1h",
+            "trusted_keys": ["RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3", "nope"]
+        }}),
+    );
+    let found = errors(config.clone());
+    assert!(has(&found, "upgrade.binary", "absolute"));
+    assert!(has(&found, "upgrade.start_timeout", "between 1s and 10m"));
+    assert!(has(&found, "upgrade.trusted_keys[1]", "minisign"));
+    assert!(!found.iter().any(|(p, _)| p == "upgrade.trusted_keys[0]"));
+    assert!(has(&warnings(config), "upgrade.drain", "old binary"));
+    let ok: Config = serde_json::from_value(json!({ "upgrade": { "drain": "5s" } })).unwrap();
+    assert_eq!(
+        ok.upgrade.unwrap().drain,
+        crate::settings::DrainLimit::Within(crate::values::Duration::from_secs(5))
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Balancing (H-LB-01…03, H-HA-05, ADR-0031)
+
+fn service(patch: Value) -> Value {
+    let mut base = app();
+    merge(&mut base, json!({ "services": { "app": Value::Null } }));
+    if let Some(services) = base.get_mut("services") {
+        services["app"] = patch;
+    }
+    base
+}
+
+#[test]
+fn priorities_are_bounded_and_exclusive_with_backup() {
+    let found = errors(service(json!({ "backends": [
+        { "address": "a:1" },
+        { "address": "b:1", "priority": 8 },
+        { "address": "c:1", "priority": 2, "backup": true }
+    ]})));
+    assert!(
+        has(
+            &found,
+            "services.app.backends[1].priority",
+            "from 0 (first) to 7"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "services.app.backends[2].backup", "not both"),
+        "{found:?}"
+    );
+    let found = errors(service(json!({ "backends": [
+        { "address": "a:1", "priority": 1 }, { "address": "b:1", "backup": true }
+    ]})));
+    assert!(
+        has(
+            &found,
+            "services.app.backends",
+            "no backend is in priority 0"
+        ),
+        "{found:?}"
+    );
+    let ok = service(json!({ "backends": [
+        { "address": "a:1", "priority": 0, "zone": "eu-1a" },
+        { "address": "b:1", "priority": 7, "for_zones": ["eu-1b"] }
+    ], "failover": "spill", "overprovisioning": 1.5 }));
+    assert_eq!(errors(ok), Vec::new());
+}
+
+#[test]
+fn spill_settings_and_zones_are_checked() {
+    let found = errors(service(json!({
+        "backends": [{ "address": "a:1", "zone": "" }, { "address": "b:1", "priority": 1 }],
+        "failover": "spill", "overprovisioning": 0.5
+    })));
+    assert!(
+        has(&found, "services.app.overprovisioning", "at least 1"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "services.app.backends[0].zone", "non-empty"),
+        "{found:?}"
+    );
+    let found = warnings(service(json!({
+        "backends": [{ "address": "a:1" }], "overprovisioning": 1.4,
+        "locality": { "mode": "prefer" }
+    })));
+    assert!(has(
+        &found,
+        "services.app.overprovisioning",
+        "only used with `failover: spill`"
+    ));
+    assert!(has(
+        &found,
+        "services.app.locality",
+        "no backend has a `zone`"
+    ));
+    let found = errors(with(
+        app(),
+        json!({ "locality": { "zone": "a b", "mode": "prefer" } }),
+    ));
+    assert!(has(&found, "locality.zone", "without spaces"), "{found:?}");
+}
+
+#[test]
+fn peak_ewma_settings_belong_to_their_policy() {
+    let found = warnings(service(json!({ "backends": [{ "address": "a:1" }],
+        "load_balancer": { "decay": "5s", "measure": "last_byte" } })));
+    assert!(has(
+        &found,
+        "services.app.load_balancer.decay",
+        "only used by the peak_ewma"
+    ));
+    assert!(has(
+        &found,
+        "services.app.load_balancer.measure",
+        "only used by the peak_ewma"
+    ));
+    let found = errors(service(json!({ "backends": [{ "address": "a:1" }],
+        "load_balancer": { "policy": "peak_ewma", "decay": "0s" } })));
+    assert!(has(
+        &found,
+        "services.app.load_balancer.decay",
+        "must not be zero"
+    ));
+    let ok = service(json!({ "backends": [{ "address": "a:1" }],
+        "load_balancer": { "policy": "peak_ewma", "decay": "10s", "measure": "first_byte" } }));
+    assert_eq!(validate(ok), Vec::new());
+}
+
+#[test]
+fn slow_start_has_two_forms_and_is_refused_with_hash_policies() {
+    let short = service(json!({ "backends": [{ "address": "a:1" }],
+        "health": { "slow_start": "30s" } }));
+    assert_eq!(errors(short), Vec::new());
+    let long = service(json!({ "backends": [{ "address": "a:1" }],
+        "health": { "slow_start": { "window": "1m", "aggression": 2, "min_weight_percent": 5,
+            "on": ["recovery", "join"] } } }));
+    assert_eq!(errors(long), Vec::new());
+    let found = errors(service(json!({ "backends": [{ "address": "a:1" }],
+        "load_balancer": { "policy": "ip_hash" },
+        "health": { "slow_start": { "window": "0s", "aggression": 0,
+            "min_weight_percent": 101, "on": [] } } })));
+    for (path, fragment) in [
+        ("services.app.health.slow_start", "hash policies"),
+        ("services.app.health.slow_start.window", "zero"),
+        ("services.app.health.slow_start.aggression", "above 0"),
+        (
+            "services.app.health.slow_start.min_weight_percent",
+            "at most 100",
+        ),
+        ("services.app.health.slow_start.on", "recovery"),
+    ] {
+        assert!(has(&found, path, fragment), "{path}: {found:?}");
+    }
+}
+
+#[test]
+fn outlier_detectors_need_three_hosts_and_say_when_they_are_off() {
+    let found = errors(service(json!({ "backends": [{ "address": "a:1" }],
+        "health": { "passive": { "outlier": {
+            "interval": "0s",
+            "success_rate": { "enabled": true, "minimum_hosts": 2, "request_volume": 0,
+                "stdev_factor": 0 },
+            "failure_percentage": { "enabled": true, "minimum_hosts": 1, "threshold": 101 }
+        } } } })));
+    for (path, fragment) in [
+        ("services.app.health.passive.outlier.interval", "zero"),
+        (
+            "services.app.health.passive.outlier.success_rate.minimum_hosts",
+            "at least 3",
+        ),
+        (
+            "services.app.health.passive.outlier.success_rate.request_volume",
+            "zero",
+        ),
+        (
+            "services.app.health.passive.outlier.success_rate.stdev_factor",
+            "above 0",
+        ),
+        (
+            "services.app.health.passive.outlier.failure_percentage.minimum_hosts",
+            "at least 3",
+        ),
+        (
+            "services.app.health.passive.outlier.failure_percentage.threshold",
+            "1 to 100",
+        ),
+    ] {
+        assert!(has(&found, path, fragment), "{path}: {found:?}");
+    }
+    let found = warnings(service(json!({ "backends": [{ "address": "a:1" }],
+        "health": { "passive": { "outlier": { "success_rate": {} } } } })));
+    assert!(has(
+        &found,
+        "services.app.health.passive.outlier.success_rate",
+        "the detector is off"
+    ));
+}
+
+#[test]
+fn per_try_timeout_needs_timeout_retries() {
+    let found = errors(service(json!({ "backends": [{ "address": "a:1" }],
+        "retries": { "per_try_timeout": "500ms" } })));
+    assert!(has(
+        &found,
+        "services.app.retries.per_try_timeout",
+        "does not list `timeout`"
+    ));
+    let found = warnings(service(json!({ "backends": [{ "address": "a:1" }],
+        "timeouts": { "read": "1s" },
+        "retries": { "per_try_timeout": "2s", "on": ["timeout"], "attempts": 0 } })));
+    assert!(has(
+        &found,
+        "services.app.retries.per_try_timeout",
+        "not shorter than"
+    ));
+    assert!(has(
+        &found,
+        "services.app.retries.per_try_timeout",
+        "attempts: 0"
+    ));
+    let ok = service(json!({ "backends": [{ "address": "a:1" }],
+        "retries": { "per_try_timeout": "500ms", "on": ["connect", "timeout"] } }));
+    assert_eq!(validate(ok), Vec::new());
+}
+
+#[test]
+fn fingerprint_rules_need_a_listener_that_computes_them() {
+    let base = json!({
+        "listeners": { "websecure": { "address": ":443", "tls": {} } },
+        "routes": { "app": {
+            "match": "Host(`a.test`) && ClientFingerprint(`t13d1516h2_8daaf6152771_e5627efa2ab1`)",
+            "service": "app"
+        } },
+        "services": { "app": { "backends": [{ "address": "app:3000" }] } }
+    });
+    assert!(has(
+        &errors(base.clone()),
+        "routes.app.match",
+        "computes fingerprints"
+    ));
+    let on = with(
+        base.clone(),
+        json!({ "listeners": { "websecure": { "tls": { "fingerprint": { "header": "X-JA4" } } } } }),
+    );
+    assert_eq!(errors(on), Vec::new());
+    let bad = with(
+        base,
+        json!({ "listeners": { "websecure": { "tls": { "fingerprint": {
+            "ja3_header": "X-JA3", "header": "bad header"
+        } } } } }),
+    );
+    let found = errors(bad);
+    assert!(has(
+        &found,
+        "listeners.websecure.tls.fingerprint.ja3_header",
+        "ja3: true"
+    ));
+    assert!(has(
+        &found,
+        "listeners.websecure.tls.fingerprint.header",
+        "not a valid header"
+    ));
+}
+
+#[test]
+fn geo_matchers_need_their_database() {
+    let rule = |m: &str| {
+        with(
+            app(),
+            json!({ "routes": { "app": { "match": format!("Host(`app.example.com`) && {m}") } } }),
+        )
+    };
+    for m in [
+        "ClientCountry(`DE`)",
+        "ClientContinent(`EU`)",
+        "ClientASN(`64496`)",
+    ] {
+        assert!(
+            has(
+                &errors(rule(m)),
+                "routes.app.match",
+                "needs a GeoIP database"
+            ),
+            "{m}"
+        );
+    }
+    let with_asn = with(
+        rule("ClientASN(`64496`)"),
+        json!({ "geoip": { "asn_database": "/x/asn.mmdb" } }),
+    );
+    assert_eq!(errors(with_asn), Vec::new());
+    let country_only_asn = with(
+        rule("ClientCountry(`DE`)"),
+        json!({ "geoip": { "asn_database": "/x/asn.mmdb" } }),
+    );
+    assert!(has(
+        &errors(country_only_asn),
+        "routes.app.match",
+        "needs a GeoIP database"
+    ));
+    let tcp = json!({
+        "tcp_routes": { "db": { "match": "HostSNI(`*`) && ClientCountry(`DE`)", "service": "db" } },
+        "tcp_services": { "db": { "backends": [{ "address": "db:5432" }] } }
+    });
+    assert!(has(
+        &errors(tcp),
+        "tcp_routes.db.match",
+        "needs a GeoIP database"
+    ));
+    assert!(has(
+        &errors(with(
+            app(),
+            json!({ "geoip": { "database": "/x/c.mmdb", "max_age": "0s" } })
+        )),
+        "geoip.max_age",
+        "more than zero"
+    ));
+}
+
+#[test]
+fn abuse_settings_are_checked() {
+    let mw = |settings: Value| {
+        let mut abuse = json!({ "type": "abuse" });
+        merge(&mut abuse, settings);
+        with(app(), json!({ "middlewares": { "guard": abuse } }))
+    };
+    assert_eq!(errors(mw(json!({}))), Vec::new());
+    assert_eq!(
+        errors(mw(
+            json!({ "events": [401, "4xx", "auth_failure"], "key": "ja4", "action": "tarpit" })
+        )),
+        Vec::new()
+    );
+    let found = errors(mw(
+        json!({ "events": [], "threshold": 0, "ban": "0s", "max_bans": 0 }),
+    ));
+    assert!(has(&found, "middlewares.guard.events", "at least one"));
+    assert!(has(&found, "middlewares.guard.threshold", "at least 1"));
+    assert!(has(&found, "middlewares.guard.ban", "at least 1s"));
+    assert!(has(&found, "middlewares.guard.max_bans", "between"));
+    let tarpit = errors(mw(
+        json!({ "action": "tarpit", "tarpit": { "delay": "2m" } }),
+    ));
+    assert!(has(&tarpit, "middlewares.guard.tarpit.delay", "60s"));
+    assert!(has(
+        &warnings(mw(json!({ "key": "header:X-Session" }))),
+        "middlewares.guard.key",
+        "the client chooses"
+    ));
+    let config: Result<Config, _> = serde_json::from_value(mw(json!({ "events": [200] })));
+    assert!(config.is_err(), "events are 4xx and 5xx statuses");
+}
+
+#[test]
+fn spiffe_rules_are_checked() {
+    let mw = |spiffe: Value| {
+        with(
+            app(),
+            json!({ "middlewares": { "workloads": { "type": "client_cert", "spiffe": spiffe } } }),
+        )
+    };
+    assert_eq!(
+        errors(mw(json!({
+            "trust_domains": ["prod.example.com"],
+            "ids": ["spiffe://prod.example.com/ns/web/sa/api"],
+            "id_prefixes": ["spiffe://prod.example.com/ns/jobs"]
+        }))),
+        Vec::new()
+    );
+    let found = errors(mw(json!({ "trust_domains": [] })));
+    assert!(has(
+        &found,
+        "middlewares.workloads.spiffe.trust_domains",
+        "at least one"
+    ));
+    let found = errors(mw(json!({
+        "trust_domains": ["Prod.Example.com:443"],
+        "ids": ["spiffe://other.example.com/x", "https://prod.example.com/x"]
+    })));
+    assert!(has(
+        &found,
+        "middlewares.workloads.spiffe.trust_domains",
+        "not a trust domain"
+    ));
+    assert!(has(
+        &found,
+        "middlewares.workloads.spiffe.ids",
+        "not in one of"
+    ));
+    assert!(has(
+        &found,
+        "middlewares.workloads.spiffe.ids",
+        "not a SPIFFE ID"
+    ));
+    let pins = errors(with(
+        app(),
+        json!({ "middlewares": { "pinned": { "type": "client_cert", "sha256": ["abc"] } } }),
+    ));
+    assert!(has(&pins, "middlewares.pinned.sha256", "64 digits"));
+}
+
+#[test]
+fn cluster_members_need_a_control_plane_or_a_directory() {
+    let found = errors(json!({ "cluster": {} }));
+    assert!(has(&found, "cluster", "needs `control`"));
+    let found = errors(json!({ "cluster": { "store": { "type": "directory" } } }));
+    assert!(has(&found, "cluster.store.path", "required"));
+    let found = errors(json!({ "cluster": { "store": { "type": "control" } } }));
+    assert!(has(&found, "cluster.store.type", "needs `cluster.control`"));
+    let ok = validate(with(
+        app(),
+        json!({ "cluster": { "store": { "type": "directory", "path": "/shared/rdock" } } }),
+    ));
+    assert!(!ok.iter().any(Diagnostic::is_error), "{ok:?}");
+    assert!(
+        ok.iter()
+            .any(|d| d.path == "cluster.store" && d.message.contains("best effort"))
+    );
+    assert!(
+        ok.iter()
+            .any(|d| d.path == "acme.challenges" && d.message.contains("cut off"))
+    );
+    let found = errors(
+        json!({ "cluster": { "store": { "type": "directory", "path": "/s", "lease_ttl": "1s", "barrier_timeout": "5m" } } }),
+    );
+    assert!(has(
+        &found,
+        "cluster.store.lease_ttl",
+        "between 10s and 10m"
+    ));
+    assert!(has(
+        &found,
+        "cluster.store.barrier_timeout",
+        "between 1s and 2m"
+    ));
+}
+
+#[test]
+fn cluster_control_is_https_and_authenticated() {
+    let found =
+        errors(json!({ "cluster": { "control": { "url": "http://cp.example.com:7443" } } }));
+    assert!(has(&found, "cluster.control.url", "`https://` only"));
+    assert!(has(&found, "cluster.control", "`ca_file` or `ca_pin`"));
+    let found = errors(json!({ "cluster": { "control": {
+        "url": "https://cp.example.com:7443/x", "ca_pin": "sha256:abc", "identity_dir": "rel",
+        "poll_timeout": "1s"
+    } } }));
+    assert!(has(&found, "cluster.control.url", "root"));
+    assert!(has(&found, "cluster.control.ca_pin", "64 lower-case"));
+    assert!(has(&found, "cluster.control.identity_dir", "absolute"));
+    assert!(has(
+        &found,
+        "cluster.control.poll_timeout",
+        "between 5s and 5m"
+    ));
+    let pin = format!("sha256:{}", "0f".repeat(32));
+    let ok = validate(json!({ "cluster": { "control": {
+        "url": "https://cp.example.com:7443", "ca_pin": pin, "join_token": "rdk_join_literal"
+    } } }));
+    assert!(!ok.iter().any(Diagnostic::is_error), "{ok:?}");
+    assert!(
+        ok.iter()
+            .any(|d| d.path == "cluster.control.join_token" && d.message.contains("secret"))
+    );
+}
+
+#[test]
+fn control_plane_settings_are_bounded() {
+    let found = errors(json!({ "control": {
+        "names": ["bad name"], "identity_lifetime": "1m", "join_token_ttl": "1s",
+        "history": 0, "offline_after": "2h"
+    } }));
+    assert!(has(&found, "control.names[0]", "DNS name"));
+    assert!(has(
+        &found,
+        "control.identity_lifetime",
+        "between 1h and 90d"
+    ));
+    assert!(has(&found, "control.join_token_ttl", "between 1m and 30d"));
+    assert!(has(&found, "control.history", "between 1 and 1000"));
+    assert!(has(&found, "control.offline_after", "between 10s and 1h"));
+    let both = errors(
+        json!({ "control": {}, "cluster": { "store": { "type": "directory", "path": "/s" } } }),
+    );
+    assert!(has(&both, "control", "not both"));
+    let open = warnings(json!({ "control": { "listener": "0.0.0.0:7443" } }));
+    assert!(has(&open, "control.names", "certificate"));
+}
+
+#[test]
+fn kubernetes_members_of_a_control_plane_cluster_may_use_acme() {
+    let pin = format!("sha256:{}", "0f".repeat(32));
+    let shared = validate(with(
+        app(),
+        json!({
+            "providers": { "kubernetes": { "gateway": { "pod_selector": { "app": "rdock" } } } },
+            "cluster": { "control": { "url": "https://cp.example.com:7443", "ca_pin": pin } }
+        }),
+    ));
+    assert!(
+        !shared.iter().any(|d| d.path == "acme" && d.is_error()),
+        "{shared:?}"
+    );
+    assert!(
+        !shared
+            .iter()
+            .any(|d| d.message.contains("share no certificate storage"))
+    );
+    // A shared directory is not enough: still refused without `allow_acme`.
+    let directory = errors(with(
+        app(),
+        json!({
+            "providers": { "kubernetes": { "gateway": { "pod_selector": { "app": "rdock" } } } },
+            "cluster": { "store": { "type": "directory", "path": "/shared" } }
+        }),
+    ));
+    assert!(has(&directory, "acme", "providers.kubernetes"));
+}
+
+#[test]
+fn group_keys_need_a_consumer_and_accept_overrides() {
+    let config = with(
+        app(),
+        json!({
+            "middlewares": {
+                "per_group": { "type": "rate_limit", "key": "group", "average": 10,
+                               "overrides": { "gold": { "average": 100 } } },
+                "monthly": { "type": "quota", "key": "group", "limit": 1000, "window": "month" },
+                "by_ip": { "type": "rate_limit", "average": 10, "overrides": { "gold": { "average": 1 } } }
+            },
+            "routes": { "app": { "middlewares": ["per_group", "monthly", "by_ip"] } }
+        }),
+    );
+    let found = errors(config);
+    assert!(
+        has(&found, "routes.app.middlewares[0]", "counts per consumer"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "routes.app.middlewares[1]", "counts per consumer"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.by_ip.overrides", "`key: group`"),
+        "{found:?}"
+    );
+    assert!(
+        !found
+            .iter()
+            .any(|(p, _)| p.starts_with("middlewares.per_group")),
+        "{found:?}"
+    );
+    assert!(
+        !found
+            .iter()
+            .any(|(p, _)| p.starts_with("middlewares.monthly")),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn admission_refuses_meaningless_settings() {
+    let config = with(
+        app(),
+        json!({
+            "middlewares": {
+                "bad": { "type": "admission", "mode": "aimd", "min": 50, "max": 10,
+                         "interval": "10s", "shares": { "normal": 50, "sheddable": 80 } },
+                "grad": { "type": "admission", "mode": "gradient", "latency": "1s", "max": 200_000,
+                          "interval": "2h", "jitter_percent": 101, "probe_timeout": "10ms" },
+                "ok": { "type": "admission", "mode": "gradient" },
+                "slots": { "type": "in_flight", "amount": 10, "key": "route" }
+            },
+            "routes": { "app": { "middlewares": ["ok", "slots"], "priority_class": "critical" } }
+        }),
+    );
+    let found = errors(config.clone());
+    assert!(
+        has(&found, "middlewares.bad.min", "above `max`"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.bad.interval", "does not apply"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.grad.interval", "1s to 1h"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.grad.jitter_percent", "0 to 100"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.grad.probe_timeout", "100ms to 60s"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.bad.shares.sheddable", "above `normal`"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.grad.latency", "does not apply"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.grad.max", "at most 100000"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "routes.app.middlewares[1]", "two caps"),
+        "{found:?}"
+    );
+    assert!(
+        !found.iter().any(|(p, _)| p.starts_with("middlewares.ok")),
+        "{found:?}"
+    );
+    // A class without an admission middleware does nothing: a warning.
+    let lone = with(
+        app(),
+        json!({ "routes": { "app": { "priority_class": "sheddable" } } }),
+    );
+    assert!(has(
+        &warnings(lone),
+        "routes.app.priority_class",
+        "only matters"
+    ));
+}
+
+fn merged_errors(value: Value) -> Vec<(String, String)> {
+    let config: Config = serde_json::from_value(value).unwrap();
+    config
+        .validate_merged()
+        .into_iter()
+        .filter(Diagnostic::is_error)
+        .map(|d| (d.path, d.message))
+        .collect()
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn tenant_objects_stay_inside_their_claims_and_prefix() {
+    let backend = json!({ "backends": [{ "address": "10.0.0.1:80" }] });
+    let public = json!({ "backends": [{ "address": "app.example.net:80" }] });
+    let config = json!({
+        "tenants": {
+            "acme": { "hosts": ["acme.example.com", "*.acme.example.com"],
+                      "shared": { "middlewares": ["compress"] } },
+            "globex": { "hosts": ["globex.example.com"], "backend_networks": ["10.0.0.0/8"] }
+        },
+        "routes": {
+            "acme-web@api": { "match": "Host(`shop.acme.example.com`) && PathPrefix(`/`)",
+                              "service": "acme-svc@api", "middlewares": ["compress", "acme-hdr@api"] },
+            "acme-out@api": { "match": "Host(`globex.example.com`)", "service": "acme-svc@api" },
+            "acme-or@api": { "match": "Host(`acme.example.com`) || Host(`globex.example.com`)", "service": "acme-svc@api" },
+            "acme-wide@api": { "match": "Host(`*.example.com`)", "service": "acme-svc@api" },
+            "acme-any@api": { "match": "PathPrefix(`/`)", "service": "acme-svc@api" },
+            "acme-steal@api": { "match": "Host(`acme.example.com`)", "service": "globex-svc@api" },
+            "globex-web@api": { "match": "Host(`globex.example.com`)", "service": "globex-svc@api" },
+            "file-route": { "match": "Host(`globex.example.com`)", "service": "file-svc" }
+        },
+        "services": {
+            "acme-svc@api": public,
+            "acme-loop@api": { "backends": [{ "address": "127.0.0.1:9900" }] },
+            "acme-meta@api": { "backends": [{ "address": "169.254.169.254:80" }] },
+            "acme-sock@api": { "backends": [{ "address": "unix:///run/admin.sock" }] },
+            "acme-tls@api": { "backends": [{ "address": "app.example.net:443" }], "scheme": "https",
+                              "tls": { "ca_file": "/etc/ssl/private/ca.pem" } },
+            "globex-svc@api": backend.clone(),
+            "file-svc": backend
+        },
+        "middlewares": {
+            "compress": { "type": "compress" },
+            "acme-hdr@api": { "type": "headers", "request": { "set": { "x-key": "${env:ADMIN_TOKEN}" } } },
+            "acme-fa@api": { "type": "forward_auth", "address": "http://auth.internal:9000/check" },
+            "acme-page@api": { "type": "errors", "status": ["500"], "file": "/etc/shadow" },
+            "acme-rewrite@api": { "type": "rewrite", "regex": "^/(.*)", "replacement": "/${1}" }
+        }
+    });
+    let found = merged_errors(config);
+    let at = |path: &str, fragment: &str| has(&found, path, fragment);
+    assert!(
+        !found
+            .iter()
+            .any(|(p, _)| p.starts_with(&crate::diagnostics::path_key("routes", "acme-web@api"))),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &format!(
+                "{}.match",
+                crate::diagnostics::path_key("routes", "acme-out@api")
+            ),
+            "not inside the host claims"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &format!(
+                "{}.match",
+                crate::diagnostics::path_key("routes", "acme-or@api")
+            ),
+            "not inside"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &format!(
+                "{}.match",
+                crate::diagnostics::path_key("routes", "acme-wide@api")
+            ),
+            "not inside"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &format!(
+                "{}.match",
+                crate::diagnostics::path_key("routes", "acme-any@api")
+            ),
+            "not inside"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &format!(
+                "{}.service",
+                crate::diagnostics::path_key("routes", "acme-steal@api")
+            ),
+            "outside tenant `acme`"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &format!(
+                "{}.backends[0].address",
+                crate::diagnostics::path_key("services", "acme-loop@api")
+            ),
+            "loopback"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &format!(
+                "{}.backends[0].address",
+                crate::diagnostics::path_key("services", "acme-meta@api")
+            ),
+            "cloud metadata"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &format!(
+                "{}.backends[0].address",
+                crate::diagnostics::path_key("services", "acme-sock@api")
+            ),
+            "Unix socket"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &format!(
+                "{}.tls.ca_file",
+                crate::diagnostics::path_key("services", "acme-tls@api")
+            ),
+            "reads a file"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &format!(
+                "{}.request.set.x-key",
+                crate::diagnostics::path_key("middlewares", "acme-hdr@api")
+            ),
+            "`${…}` reference"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &crate::diagnostics::path_key("middlewares", "acme-fa@api"),
+            "`type: forward_auth`"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &format!(
+                "{}.file",
+                crate::diagnostics::path_key("middlewares", "acme-page@api")
+            ),
+            "reads a file"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        !found
+            .iter()
+            .any(|(p, _)| p.starts_with(&crate::diagnostics::path_key(
+                "middlewares",
+                "acme-rewrite@api"
+            ))),
+        "{found:?}"
+    );
+    // The other tenant's and the file's objects are not checked against acme.
+    assert!(
+        !found
+            .iter()
+            .any(|(p, _)| p.starts_with(&crate::diagnostics::path_key("routes", "globex-web@api"))),
+        "{found:?}"
+    );
+    assert!(
+        !found
+            .iter()
+            .any(|(p, _)| p.starts_with(&crate::diagnostics::path_key("routes", "file-route"))),
+        "{found:?}"
+    );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn tenant_backends_reach_only_global_addresses_by_default() {
+    let config = |networks: Value, addresses: &[&str]| {
+        let services: serde_json::Map<String, Value> = addresses
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                (
+                    format!("acme-s{i}@api"),
+                    json!({ "backends": [{ "address": a }] }),
+                )
+            })
+            .collect();
+        json!({
+            "tenants": { "acme": { "hosts": ["acme.example.com"], "backend_networks": networks } },
+            "services": services,
+        })
+    };
+    let refused = [
+        "127.0.0.1:80",
+        "127.0.0.2:80",
+        "0.0.0.0:80",
+        "10.0.0.1:80",
+        "172.17.0.1:2375",
+        "192.168.1.1:80",
+        "100.64.0.1:80",
+        "169.254.169.254:80",
+        "169.254.170.2:80",
+        "168.63.129.16:80",
+        "224.0.0.1:80",
+        "192.0.2.1:80",
+        "[::1]:80",
+        "[::]:80",
+        "[::ffff:127.0.0.1]:80",
+        "[::ffff:8.8.8.8]:80",
+        "[fe80::1]:80",
+        "[fd00:ec2::254]:80",
+        "[fd12::1]:80",
+        "[2001:db8::1]:80",
+        "localhost:80",
+        "localhost.localdomain:80",
+        "ip6-localhost:80",
+        "ip6-loopback:80",
+        "a.localhost:80",
+        "unix:///run/admin.sock",
+    ];
+    let found = merged_errors(config(json!([]), &refused));
+    for (i, address) in refused.iter().enumerate() {
+        let path = format!(
+            "{}.backends[0].address",
+            crate::diagnostics::path_key("services", &format!("acme-s{i}@api"))
+        );
+        assert!(
+            has(&found, &path, "cannot send traffic"),
+            "{address}: {found:?}"
+        );
+    }
+    let accepted = [
+        "8.8.8.8:53",
+        "[2001:4860:4860::8888]:53",
+        "app.example.net:80",
+        "srv://_http._tcp.example.net",
+    ];
+    let found = merged_errors(config(json!([]), &accepted));
+    assert!(found.is_empty(), "{found:?}");
+    // With networks: exactly those, IP literals only.
+    let listed = [
+        "10.1.2.3:80",
+        "[::ffff:10.1.2.3]:80",
+        "8.8.8.8:80",
+        "app.example.net:80",
+        "169.254.169.254:80",
+    ];
+    let found = merged_errors(config(json!(["10.0.0.0/8", "0.0.0.0/0"]), &listed));
+    let at = |i: usize| {
+        format!(
+            "{}.backends[0].address",
+            crate::diagnostics::path_key("services", &format!("acme-s{i}@api"))
+        )
+    };
+    assert!(!found.iter().any(|(p, _)| *p == at(0)), "{found:?}");
+    assert!(has(&found, &at(1), "IPv4-mapped"), "{found:?}");
+    assert!(
+        !found.iter().any(|(p, _)| *p == at(2)),
+        "inside 0.0.0.0/0: {found:?}"
+    );
+    assert!(has(&found, &at(3), "DNS name"), "{found:?}");
+    assert!(has(&found, &at(4), "metadata"), "{found:?}");
+    // Listing loopback or link-local is allowed, with a warning.
+    let config: Config =
+        serde_json::from_value(config(json!(["127.0.0.1", "169.254.0.0/16"]), &[])).unwrap();
+    let warned: Vec<_> = config
+        .validate_merged()
+        .into_iter()
+        .filter(|d| !d.is_error())
+        .map(|d| (d.path, d.message))
+        .collect();
+    assert!(
+        has(&warned, "tenants.acme.backend_networks[0]", "loopback"),
+        "{warned:?}"
+    );
+    assert!(
+        has(&warned, "tenants.acme.backend_networks[1]", "link-local"),
+        "{warned:?}"
+    );
+}
+
+#[test]
+fn numeric_host_spellings_are_never_dns_names() {
+    for address in [
+        "127.1:80",
+        "2130706433:80",
+        "2852039166:80",
+        "0:80",
+        "0.0:80",
+        "0x7f.0.0.1:80",
+        "0x7f000001:80",
+        "0177.0.0.1:80",
+        "127.0.0.1.:80",
+        "[fe80::1%eth0]:80",
+        "[::ffff:127.0.0.1%1]:80",
+    ] {
+        assert!(
+            address.parse::<crate::values::BackendAddress>().is_err(),
+            "{address}"
+        );
+    }
+    let message = "127.1:80"
+        .parse::<crate::values::BackendAddress>()
+        .unwrap_err()
+        .to_string();
+    assert!(message.contains("non-canonical IP address"), "{message}");
+    assert!("app-1:80".parse::<crate::values::BackendAddress>().is_ok());
+}
+
+#[test]
+fn tenant_limits_cap_bodies_objects_and_certificate_names() {
+    let route =
+        |host: &str| json!({ "match": format!("Host(`{host}`)"), "service": "acme-svc@api" });
+    let mut routes = serde_json::Map::new();
+    for i in 0..4 {
+        routes.insert(
+            format!("acme-r{i}@api"),
+            route(&format!("r{i}.acme.example.com")),
+        );
+    }
+    routes.insert(
+        "acme-big@api".into(),
+        json!({ "match": "Host(`big.acme.example.com`)", "service": "acme-svc@api", "max_body": "2MiB" }),
+    );
+    routes.insert(
+        "acme-crit@api".into(),
+        json!({ "match": "Host(`c.acme.example.com`)", "service": "acme-svc@api",
+                "priority_class": "critical", "middlewares": ["shared-adm"] }),
+    );
+    routes.insert(
+        "acme-crit-own@api".into(),
+        json!({ "match": "Host(`d.acme.example.com`)", "service": "acme-svc@api",
+                "priority_class": "critical", "middlewares": ["acme-adm@api"] }),
+    );
+    let found = merged_errors(json!({
+        "defaults": { "tls": "auto" },
+        "tenants": { "acme": {
+            "hosts": ["*.acme.example.com"],
+            "shared": { "middlewares": ["shared-adm"] },
+            "limits": { "max_body": "1MiB", "max_routes": 6, "max_tls_names": 3 }
+        } },
+        "routes": routes,
+        "services": { "acme-svc@api": { "backends": [{ "address": "app.example.net:80" }] } },
+        "middlewares": {
+            "shared-adm": { "type": "admission", "mode": "aimd" },
+            "acme-adm@api": { "type": "admission", "mode": "aimd" },
+            "acme-hold@api": { "type": "hold_body", "max": "4MiB" }
+        }
+    }));
+    let key = |section: &str, name: &str| crate::diagnostics::path_key(section, name);
+    assert!(
+        has(
+            &found,
+            &format!("{}.max_body", key("routes", "acme-big@api")),
+            "body limit"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        has(
+            &found,
+            &format!("{}.max", key("middlewares", "acme-hold@api")),
+            "body limit"
+        ),
+        "{found:?}"
+    );
+    // Seven routes, six allowed: the last by name is refused.
+    assert!(
+        has(&found, &key("routes", "acme-r3@api"), "at most 6 routes"),
+        "{found:?}"
+    );
+    assert!(
+        found
+            .iter()
+            .filter(|(_, m)| m.contains("at most 6 routes"))
+            .count()
+            == 1,
+        "{found:?}"
+    );
+    // Three certificate names: the fourth name is refused.
+    assert!(
+        found
+            .iter()
+            .any(|(_, m)| m.contains("at most 3 host names")),
+        "{found:?}"
+    );
+    assert!(
+        has(
+            &found,
+            &format!("{}.priority_class", key("routes", "acme-crit@api")),
+            "cannot mark routes `critical`"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        !found
+            .iter()
+            .any(|(p, _)| p.starts_with(&key("routes", "acme-crit-own@api"))
+                && p.ends_with("priority_class")),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn tenant_diagnostics_do_not_list_other_objects() {
+    let found = merged_errors(json!({
+        "tenants": { "acme": { "hosts": ["acme.example.com"] } },
+        "routes": {
+            "acme-a@api": { "match": "Host(`acme.example.com`)", "service": "secret-backend" },
+            "acme-b@api": { "match": "Host(`acme.example.com`) && Path(`/b`)", "service": "nothing-here" },
+            "acme-c@api": { "match": "Host(`acme.example.com`) && Path(`/c`)", "service": "acme-missing@api" }
+        },
+        "services": {
+            "secret-backend": { "backends": [{ "address": "10.0.0.1:80" }] }
+        }
+    }));
+    let key = |name: &str| format!("{}.service", crate::diagnostics::path_key("routes", name));
+    // Existing and missing objects outside the tenant answer the same.
+    let a: Vec<_> = found
+        .iter()
+        .filter(|(p, _)| *p == key("acme-a@api"))
+        .map(|(_, m)| m.replace("secret-backend", "X"))
+        .collect();
+    let b: Vec<_> = found
+        .iter()
+        .filter(|(p, _)| *p == key("acme-b@api"))
+        .map(|(_, m)| m.replace("nothing-here", "X"))
+        .collect();
+    assert_eq!(a, b, "{found:?}");
+    assert!(
+        has(&found, &key("acme-c@api"), "does not exist"),
+        "{found:?}"
+    );
+    let config: Config = serde_json::from_value(json!({
+        "tenants": { "acme": { "hosts": ["acme.example.com"] } },
+        "routes": { "acme-c@api": { "match": "Host(`acme.example.com`)", "service": "acme-missing@api" } },
+        "services": { "secret-backend": { "backends": [{ "address": "10.0.0.1:80" }] } }
+    }))
+    .unwrap();
+    for d in config.validate_merged() {
+        assert!(!format!("{d:?}").contains("secret-backend"), "{d:?}");
+    }
+}
+
+#[test]
+fn tenant_prefixes_and_claims_may_not_overlap() {
+    let found = errors(json!({
+        "tenants": {
+            "a": { "hosts": ["*.example.com"] },
+            "ab": { "prefix": "a-b", "hosts": ["shop.example.com"] },
+            "c": { "hosts": ["*.com", "bücher.example"] }
+        }
+    }));
+    assert!(has(&found, "tenants.ab.prefix", "overlap"), "{found:?}");
+    assert!(
+        has(&found, "tenants.ab.hosts", "overlaps `*.example.com`"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "tenants.c.hosts[0]", "top-level domain"),
+        "{found:?}"
+    );
+    assert!(has(&found, "tenants.c.hosts[1]", "A-label"), "{found:?}");
+}
+
+#[test]
+fn http3_values_are_bounded_and_need_an_https_listener() {
+    let config = with(
+        app(),
+        json!({ "listeners": {
+            "a": { "address": ":443", "tls": {}, "http3": {
+                "enabled": true,
+                "advertise_max_age": "0s",
+                "advertise_port": 0,
+                "max_idle": "1h",
+                "max_concurrent_streams": 0,
+                "max_header_size": "2MiB",
+                "max_connections": 10,
+                "max_connections_per_client": 11,
+                "congestion": "bbr"
+            } },
+            "b": { "address": ":80", "http3": { "enabled": true } },
+            "c": { "address": ":8443", "tls": {}, "http3": { "max_header_size": "512B", "max_connections": 0 } }
+        }}),
+    );
+    let found = errors(config.clone());
+    for (path, fragment) in [
+        ("listeners.a.http3.advertise_max_age", "between 1s and 30d"),
+        ("listeners.a.http3.advertise_port", "1-65535"),
+        ("listeners.a.http3.max_idle", "between 1s and 10m"),
+        (
+            "listeners.a.http3.max_concurrent_streams",
+            "between 1 and 10000",
+        ),
+        (
+            "listeners.a.http3.max_header_size",
+            "between 1024 and 786432",
+        ),
+        (
+            "listeners.a.http3.max_connections_per_client",
+            "`max_connections`",
+        ),
+        ("listeners.b.http3", "`https` listeners only"),
+        (
+            "listeners.c.http3.max_header_size",
+            "between 1024 and 786432",
+        ),
+        ("listeners.c.http3.max_connections", "between 1 and 1000000"),
+    ] {
+        assert!(has(&found, path, fragment), "{path}: {found:?}");
+    }
+    assert!(has(
+        &warnings(config),
+        "listeners.a.http3.congestion",
+        "experimental"
+    ));
+}
+
+#[test]
+fn http3_windows_are_bounded_and_their_memory_is_warned_about() {
+    let config = with(
+        app(),
+        json!({ "listeners": {
+            "a": { "address": ":443", "tls": {}, "http3": {
+                "client_ipv6_prefix": 16,
+                "stream_receive_window": "2MiB",
+                "receive_window": "1MiB",
+                "send_window": "128MiB",
+                "max_header_size": "768KiB"
+            } },
+            "b": { "address": ":8443", "tls": {}, "http3": {
+                "stream_receive_window": "4KiB",
+                "receive_window": "16KiB",
+                "max_header_size": "32KiB"
+            } },
+            "c": { "address": ":9443", "tls": {}, "http3": {
+                "max_connections": 100_000,
+                "receive_window": "8MiB",
+                "max_connections_per_client": 100
+            } }
+        }}),
+    );
+    let found = errors(config.clone());
+    for (path, fragment) in [
+        ("listeners.a.http3.client_ipv6_prefix", "between 32 and 128"),
+        (
+            "listeners.a.http3.stream_receive_window",
+            "at most `receive_window`",
+        ),
+        ("listeners.a.http3.send_window", "between 64KiB and 64MiB"),
+        ("listeners.b.http3.stream_receive_window", "16KiB and 16MiB"),
+        ("listeners.b.http3.receive_window", "64KiB and 64MiB"),
+        (
+            "listeners.b.http3.max_header_size",
+            "at most `receive_window`",
+        ),
+    ] {
+        assert!(has(&found, path, fragment), "{path}: {found:?}");
+    }
+    assert!(
+        !found.iter().any(|(p, _)| p.starts_with("listeners.c")),
+        "{found:?}"
+    );
+    // 100,000 × (2 × 8 MiB + 1 MiB) is 1.7 TB: a warning, not an error.
+    assert!(has(
+        &warnings(config),
+        "listeners.c.http3.max_connections",
+        "1700000 MiB"
+    ));
+    // The defaults stay below the warning: 1000 × (2 × 1 MiB + 1 MiB) = 3000 MiB.
+    let defaults = crate::config::ListenerHttp3::default();
+    assert_eq!(defaults.worst_case_memory(), 3000 << 20);
+    assert!(defaults.worst_case_memory() <= crate::config::ListenerHttp3::MEMORY_WARNING);
+}
+
+#[test]
+fn the_header_size_ceiling_stays_below_the_header_map_panic() {
+    // h3 0.0.8 calls `HeaderMap::with_capacity(fields)` and counts at least 32 bytes per field;
+    // http 1.5 panics when the capacity plus a third rounds up past 2^15.
+    let ceiling = crate::config::ListenerHttp3::MAX_HEADER_SIZE_CEILING.as_u64();
+    let fields = usize::try_from(ceiling / 32).unwrap();
+    assert_eq!(fields, 24_576);
+    let raw = fields + fields / 3;
+    assert!(raw.next_power_of_two() <= 1 << 15);
+    let one_more = fields + 1;
+    assert!((one_more + one_more / 3).next_power_of_two() > 1 << 15);
+}
+
+#[test]
+fn http3_owns_the_udp_port_of_its_address() {
+    let config = with(
+        app(),
+        json!({ "listeners": {
+            "web": { "address": ":443", "tls": {}, "http3": { "enabled": true } },
+            "dns": { "address": ":443", "protocol": "udp" }
+        }}),
+    );
+    assert!(has(
+        &errors(config),
+        "listeners.web.http3.enabled",
+        "the `udp` listener `dns`"
+    ));
+    // Off, the `udp` listener keeps the port (as before v0.9).
+    let off = with(
+        app(),
+        json!({ "listeners": {
+            "web": { "address": ":443", "tls": {}, "http3": { "enabled": false } },
+            "dns": { "address": ":443", "protocol": "udp" }
+        }}),
+    );
+    assert!(!errors(off).iter().any(|(p, _)| p.contains("http3")));
+    // The defaults are valid.
+    let defaults = with(
+        app(),
+        json!({ "listeners": { "websecure": { "address": ":443", "tls": {}, "http3": { "enabled": true } }, "web": { "address": ":80" } } }),
+    );
+    assert_eq!(errors(defaults.clone()), Vec::<(String, String)>::new());
+    assert_eq!(warnings(defaults), Vec::<(String, String)>::new());
+}
+
+#[test]
+fn basic_auth_hashes_have_a_bounded_cost() {
+    let salt = "c29tZXNhbHQxMjM0NTY3OA$AAAA";
+    let config = with(
+        app(),
+        json!({
+            "middlewares": {
+                "auth": { "type": "basic_auth", "users": [
+                    format!("ok:$argon2id$v=19$m=19456,t=2,p=1${salt}"),
+                    format!("mem:$argon2id$v=19$m=4194304,t=1,p=1${salt}"),
+                    "slow:$2b$20$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ01234"
+                ] }
+            }
+        }),
+    );
+    let found = errors(config);
+    assert!(
+        !found.iter().any(|(p, _)| p == "middlewares.auth.users[0]"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.auth.users[1]", "the limit is 262144"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.auth.users[2]", "the limit is 14"),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn consumer_bans_need_the_consumer_first_and_fingerprint_bans_warn() {
+    let config = with(
+        app(),
+        json!({
+            "consumers": { "ann": { "keys": [] } },
+            "middlewares": {
+                "ban": { "type": "abuse", "key": "consumer", "events": ["404"] },
+                "keys": { "type": "api_key" },
+                "ja4ban": { "type": "abuse", "key": "ja4", "events": ["auth_failure"], "action": "deny" },
+                "ja4limit": { "type": "rate_limit", "key": "ja4", "average": 10 }
+            },
+            "routes": {
+                "app": { "middlewares": ["ban", "keys"] },
+                "after": { "match": "Host(`after.example.com`)", "service": "app", "middlewares": ["keys", "ban"] }
+            }
+        }),
+    );
+    let found = errors(config.clone());
+    assert!(
+        has(
+            &found,
+            "routes.app.middlewares[0]",
+            "no middleware before it sets one"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        !found.iter().any(|(p, _)| p.starts_with("routes.after")),
+        "{found:?}"
+    );
+    let warned = warnings(config);
+    assert!(
+        has(
+            &warned,
+            "middlewares.ja4ban.key",
+            "every client with the same TLS stack"
+        ),
+        "{warned:?}"
+    );
+    assert!(
+        has(
+            &warned,
+            "middlewares.ja4limit.key",
+            "every client with the same TLS stack"
+        ),
+        "{warned:?}"
+    );
+}

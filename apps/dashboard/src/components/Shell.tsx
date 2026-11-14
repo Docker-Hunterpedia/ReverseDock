@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet } from "@tanstack/react-router";
 import {
-  FileCode2, Gauge, KeyRound, LayoutDashboard, LogOut, Monitor, Moon, Network, PanelLeftClose,
+  Boxes, FileCode2, Gauge, KeyRound, LayoutDashboard, LogOut, Monitor, Moon, Network, PanelLeftClose,
   PanelLeftOpen, Plug, Route, ScrollText, Server, Settings, ShieldCheck, Sun, Layers,
 } from "lucide-react";
 import { type ComponentType, useState } from "react";
@@ -22,6 +22,7 @@ const NAV: { label: string; to?: string; icon: Icon }[][] = [
     { label: "Listeners", to: "/listeners", icon: Network },
     { label: "Providers", to: "/providers", icon: Plug },
     { label: "Security", to: "/security", icon: KeyRound },
+    { label: "Cluster", to: "/cluster", icon: Boxes },
   ],
   [
     { label: "Logs", to: "/logs", icon: ScrollText },

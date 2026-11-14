@@ -28,17 +28,24 @@ pub(crate) fn compile_tcp(
     env: &CompileEnv<'_>,
     listeners: &mut BTreeMap<String, ListenerRuntime>,
     auto_tls: &mut AutoTls<'_>,
+    geoip: Option<&Arc<crate::geoip::GeoIp>>,
     out: &mut Vec<Diagnostic>,
 ) {
     let services: HashMap<&str, Arc<TcpServiceRuntime>> = config
         .tcp_services
         .iter()
-        .map(|(name, service)| (name.as_str(), Arc::new(compile_service(name, service, env))))
+        .map(|(name, service)| {
+            (
+                name.as_str(),
+                Arc::new(compile_service(name, service, config, env)),
+            )
+        })
         .collect();
     let mut attached: BTreeMap<&str, Vec<Arc<TcpRouteRuntime>>> = BTreeMap::new();
     for (name, route) in &config.tcp_routes {
         let path = path_key("tcp_routes", name);
-        let Some((expr, compiled)) = compile_route(name, route, config, &services, out) else {
+        let Some((expr, compiled)) = compile_route(name, route, config, &services, geoip, out)
+        else {
             continue;
         };
         let mut wants_certificate = false;
@@ -74,7 +81,12 @@ pub(crate) fn compile_tcp(
     }
 }
 
-fn compile_service(name: &str, service: &TcpService, env: &CompileEnv<'_>) -> TcpServiceRuntime {
+fn compile_service(
+    name: &str,
+    service: &TcpService,
+    config: &Config,
+    env: &CompileEnv<'_>,
+) -> TcpServiceRuntime {
     let pool = ServiceRuntime {
         name: Arc::from(name),
         scheme: rdock_model::service::Scheme::default(),
@@ -99,6 +111,11 @@ fn compile_service(name: &str, service: &TcpService, env: &CompileEnv<'_>) -> Tc
         timeouts: rdock_model::service::Timeouts::default(),
         tls: UpstreamTls::default(),
         pass_host_header: false,
+        allowed: None,
+        selection: crate::runtime::Selection {
+            zone: crate::compile::preferred_zone(config, None),
+            ..crate::runtime::Selection::default()
+        },
     };
     TcpServiceRuntime {
         name: Arc::from(name),
@@ -113,13 +130,14 @@ fn compile_route(
     route: &TcpRoute,
     config: &Config,
     services: &HashMap<&str, Arc<TcpServiceRuntime>>,
+    geoip: Option<&Arc<crate::geoip::GeoIp>>,
     out: &mut Vec<Diagnostic>,
 ) -> Option<(Expr, Arc<TcpRouteRuntime>)> {
     let path = path_key("tcp_routes", name);
     let compiled = rdock_rules::parse(&route.matcher)
         .map_err(|e| e.kind.to_string())
         .and_then(|expr| {
-            let rule = TcpRule::compile(&expr).map_err(|e| e.to_string())?;
+            let rule = TcpRule::compile_with(&expr, geoip).map_err(|e| e.to_string())?;
             Ok((expr, rule))
         });
     let (expr, rule) = match compiled {
@@ -158,7 +176,8 @@ fn compile_route(
         },
         length,
         any_sni: expr.has_any_sni(),
-        reads_hello: expr.reads_client_hello(),
+        reads_hello: expr.reads_client_hello() || expr.uses_fingerprint(),
+        reads_fingerprint: expr.uses_fingerprint(),
         rule,
         mode: match route.tls {
             None => TcpMode::Relay,

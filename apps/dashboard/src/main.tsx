@@ -16,6 +16,8 @@ import { Logs } from "./pages/Logs";
 
 // CodeMirror and the schema load only when the Config page opens (ADR-0024 budget).
 const Config = lazy(() => import("./pages/Config").then((m) => ({ default: m.Config })));
+// The instance view is for control planes only; it loads when opened.
+const Cluster = lazy(() => import("./pages/Cluster").then((m) => ({ default: m.Cluster })));
 import { Metrics } from "./pages/Metrics";
 import { Overview } from "./pages/Overview";
 import { Resources } from "./pages/Resources";
@@ -96,6 +98,15 @@ const router = createRouter({
       },
     }),
     createRoute({ getParentRoute: () => root, path: "/logs", component: Logs }),
+    createRoute({
+      getParentRoute: () => root,
+      path: "/cluster",
+      component: () => (
+        <Suspense fallback={<p className="text-fg-3">Loading…</p>}>
+          <Cluster session={useApp().session} />
+        </Suspense>
+      ),
+    }),
   ]),
 });
 

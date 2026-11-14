@@ -88,6 +88,12 @@ Checking a candidate needs the operator role, like changing one.
 
 `GET /api/v1/config/export` (admins, after a password check) returns `{"version":1,"api":{…}}`; `POST /api/v1/config/import` with that document and `If-Match` replaces the API objects on another instance. Write secrets as references: a document with masked `***` values is refused.
 
+## Tenants
+
+<Status planned="v0.9" /> Users and API tokens can be scoped to a [tenant](/docs/guides/tenants/):
+they then read and write only the routes, services and middlewares under the tenant's name
+prefix, with routes inside its host names, and every other operation is refused and audited.
+
 ## GitOps
 
 ```yaml title="rdock.yaml (excerpt)"

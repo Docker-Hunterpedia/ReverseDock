@@ -38,8 +38,21 @@ kubernetes = ["dep:rdock-provider-kubernetes"]
 # Sandboxed WASM plugins on wasmtime (experimental, ADR-0030). Off by default: without it a
 # configuration with `type: wasm` is refused with a diagnostic.
 wasm = ["rdock-proxy/wasm", "rdock-middleware/wasm"]
+# HTTP/3 ingress on quinn and h3 (experimental, ADR-0032). Off by default and in release builds:
+# without it a listener with `http3.enabled: true` is refused with a diagnostic.
+http3 = ["rdock-proxy/http3", "rdock-testkit/http3"]
+# jemalloc (tikv-jemallocator) as the global allocator, to compare with mimalloc (H-PERF-06,
+# ADR-0031; benchmarks/README.md, "Allocator comparison"). Wins over `mimalloc` when both are on, so
+# `--features jemalloc` on a default build is enough. Off by default and never in a published
+# binary. Builds jemalloc from C source: needs `make` and a C compiler.
+jemalloc = ["dep:tikv-jemallocator"]
 # Faults for the admin isolation test (benchmarks/isolation, H-ENG-04); never in release builds.
 fault-injection = ["rdock-admin/fault-injection"]
+# Counts allocations for the per-request measurement helper (benchmarks/perreq): the system
+# allocator wrapped in a counter, readable over the Unix socket named by
+# `RDOCK_ALLOC_COUNT_SOCKET`. Replaces mimalloc while on. Debug builds only (a release build with
+# it fails to compile); never in a published binary.
+alloc-count = ["dep:stats_alloc"]
 
 [dependencies]
 anyhow.workspace = true
@@ -52,6 +65,8 @@ rdock-acme.workspace = true
 rdock-balancer.workspace = true
 rdock-admin.workspace = true
 rdock-cloudflare.workspace = true
+rdock-cluster.workspace = true
+rdock-control.workspace = true
 rdock-config.workspace = true
 rdock-credentials.workspace = true
 rdock-dns-providers.workspace = true
@@ -66,8 +81,19 @@ rdock-provider-kubernetes = { workspace = true, optional = true }
 rdock-proxy.workspace = true
 rdock-wasm.workspace = true
 rdock-cache.workspace = true
+rdock-limits.workspace = true
+rdock-tls.workspace = true
+# Safe SCM_RIGHTS for the binary-upgrade handover (ADR-0031): received descriptors arrive as
+# `OwnedFd`; `fs` for opening the new binary without following a link. Already in the tree through tempfile, cap-std and others; 1.1.6 fixes
+# RUSTSEC-2026-0486 (xattr functions, not used here). Apache-2.0 WITH LLVM-exception OR
+# Apache-2.0 OR MIT (checked 2026-11-13).
+rustix = { version = "1.1.6", default-features = false, features = ["std", "fs", "net", "process"] }
+base64.workspace = true
+thiserror.workspace = true
 sd-notify.workspace = true
 mimalloc = { workspace = true, optional = true }
+tikv-jemallocator = { workspace = true, optional = true }
+stats_alloc = { workspace = true, optional = true }
 nix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -85,6 +111,7 @@ brotli.workspace = true
 bytes.workspace = true
 flate2.workspace = true
 futures-util = "0.3.34"
+h2.workspace = true
 http.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true

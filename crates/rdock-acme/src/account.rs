@@ -18,17 +18,53 @@ pub(crate) struct Accounts {
 }
 
 impl Accounts {
-    /// The account for `acme`'s CA: cached, loaded from storage, or created.
-    pub async fn get(&mut self, acme: &Acme, storage: &Storage) -> Result<Account, AccountError> {
+    /// The account for `acme`'s CA: cached, loaded from storage, or created. In a cluster one
+    /// instance creates it under a lease and the others load it (ADR-0031).
+    pub async fn get(
+        &mut self,
+        acme: &Acme,
+        storage: &Storage,
+        holder: &str,
+    ) -> Result<Account, AccountError> {
         let directory = directory_url(acme)?;
         if let Some(account) = self.cache.get(&directory) {
             return Ok(account.clone());
         }
-        let builder = match &acme.ca_root {
-            Some(root) => Account::builder_with_root(root)?,
-            None => Account::builder()?,
+        let builder = || match &acme.ca_root {
+            Some(root) => Account::builder_with_root(root),
+            None => Account::builder(),
         };
-        let account = if let Some(credentials) = storage.load_account(&directory)? {
+        if let Some(credentials) = storage.load_account(&directory).await? {
+            let account = builder()?.from_credentials(credentials).await?;
+            self.cache.insert(directory, account.clone());
+            return Ok(account);
+        }
+        let name = crate::storage::account_lease(&directory);
+        let ttl = std::time::Duration::from_secs(60);
+        let mut lease = None;
+        for _ in 0..60 {
+            if let Some(held) = storage
+                .store()
+                .acquire(&name, holder, ttl)
+                .await
+                .map_err(crate::storage::StorageError::from)?
+            {
+                lease = Some(held);
+                break;
+            }
+            // Another instance is creating it.
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            if let Some(credentials) = storage.load_account(&directory).await? {
+                let account = builder()?.from_credentials(credentials).await?;
+                self.cache.insert(directory, account.clone());
+                return Ok(account);
+            }
+        }
+        let Some(lease) = lease else {
+            return Err(AccountError::Busy);
+        };
+        let builder = builder()?;
+        let account = if let Some(credentials) = storage.load_account(&directory).await? {
             builder.from_credentials(credentials).await?
         } else {
             let contact = acme.email.as_ref().map(|e| format!("mailto:{e}"));
@@ -45,10 +81,17 @@ impl Accounts {
                     eab.as_ref(),
                 )
                 .await?;
-            storage.save_account(&directory, &credentials)?;
+            let saved = storage
+                .save_account(&directory, &credentials, Some(&lease))
+                .await;
+            if let Err(e) = saved {
+                let _ = storage.store().release(&lease).await;
+                return Err(e.into());
+            }
             info!(directory = %directory, "created an ACME account, which accepts the CA's terms of service");
             account
         };
+        let _ = storage.store().release(&lease).await;
         self.cache.insert(directory, account.clone());
         Ok(account)
     }
@@ -62,7 +105,9 @@ pub(crate) enum AccountError {
     #[error(transparent)]
     Acme(#[from] instant_acme::Error),
     #[error("account storage: {0}")]
-    Storage(#[from] std::io::Error),
+    Storage(#[from] crate::storage::StorageError),
+    #[error("another instance keeps creating the ACME account; trying again later")]
+    Busy,
     #[error("acme.eab.hmac_key: {0}")]
     Eab(String),
 }

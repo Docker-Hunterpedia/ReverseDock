@@ -17,6 +17,8 @@ pub struct TcpFacts<'a> {
     pub hello: Option<&'a ClientHello>,
     /// The client (after the PROXY protocol step).
     pub client_ip: IpAddr,
+    /// The JA4 of the ClientHello, computed only when a route uses `ClientFingerprint`.
+    pub fingerprint: Option<&'a rdock_middleware::ClientFingerprint>,
 }
 
 impl<'a> TcpFacts<'a> {
@@ -57,6 +59,10 @@ pub enum TcpMatcher {
     Alpn(Vec<u8>),
     /// `ClientIP(..)`.
     ClientIp(IpNet),
+    /// `ClientFingerprint(..)`.
+    Fingerprint(Vec<String>),
+    /// `ClientCountry`, `ClientContinent`, `ClientASN`.
+    Geo(crate::router::GeoMatcher),
 }
 
 impl TcpRule {
@@ -67,15 +73,29 @@ impl TcpRule {
     /// An HTTP matcher or a regular expression that does not compile; validation reports both
     /// first.
     pub fn compile(expr: &Expr) -> Result<Self, RuleCompileError> {
+        Self::compile_with(expr, None)
+    }
+
+    /// Compiles a parsed TCP (or UDP) rule; GeoIP matchers look up in `geo`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::compile`], and a GeoIP matcher without a database.
+    pub fn compile_with(
+        expr: &Expr,
+        geo: Option<&std::sync::Arc<crate::geoip::GeoIp>>,
+    ) -> Result<Self, RuleCompileError> {
+        let each = |items: &[Expr]| {
+            items
+                .iter()
+                .map(|e| Self::compile_with(e, geo))
+                .collect::<Result<Vec<_>, _>>()
+        };
         Ok(match expr {
-            Expr::Matcher(m) => Self::Match(compile_matcher(m)?),
-            Expr::Not(inner) => Self::Not(Box::new(Self::compile(inner)?)),
-            Expr::And(items) => {
-                Self::All(items.iter().map(Self::compile).collect::<Result<_, _>>()?)
-            }
-            Expr::Or(items) => {
-                Self::Any(items.iter().map(Self::compile).collect::<Result<_, _>>()?)
-            }
+            Expr::Matcher(m) => Self::Match(compile_matcher(m, geo)?),
+            Expr::Not(inner) => Self::Not(Box::new(Self::compile_with(inner, geo)?)),
+            Expr::And(items) => Self::All(each(items)?),
+            Expr::Or(items) => Self::Any(each(items)?),
         })
     }
 
@@ -91,8 +111,15 @@ impl TcpRule {
     }
 }
 
-fn compile_matcher(m: &Matcher) -> Result<TcpMatcher, RuleCompileError> {
+fn compile_matcher(
+    m: &Matcher,
+    geo: Option<&std::sync::Arc<crate::geoip::GeoIp>>,
+) -> Result<TcpMatcher, RuleCompileError> {
+    if let Some(geo) = crate::router::GeoMatcher::compile(m, geo)? {
+        return Ok(TcpMatcher::Geo(geo));
+    }
     Ok(match m {
+        Matcher::ClientFingerprint(values) => TcpMatcher::Fingerprint(values.clone()),
         Matcher::HostSni(host) if host == "*" => TcpMatcher::AnySni,
         Matcher::HostSni(host) => match host.strip_prefix("*.") {
             Some(parent) => TcpMatcher::SniWildcard(format!(".{}", normalize_host(parent))),
@@ -128,6 +155,10 @@ impl TcpMatcher {
                 .hello
                 .is_some_and(|hello| hello.alpn.iter().any(|offered| offered == protocol)),
             Self::ClientIp(net) => net.contains(&facts.client_ip),
+            Self::Fingerprint(values) => facts
+                .fingerprint
+                .is_some_and(|fp| crate::router::fingerprint_in(fp, values)),
+            Self::Geo(geo) => geo.matches(facts.client_ip),
         }
     }
 }
@@ -152,6 +183,7 @@ mod tests {
         rule(text).matches(&TcpFacts {
             hello,
             client_ip: ip.parse().unwrap(),
+            fingerprint: None,
         })
     }
 
@@ -201,6 +233,36 @@ mod tests {
             );
             assert!(matches("HostSNI(`*`)", Some(&h), "10.0.0.1"), "{bad}");
         }
+    }
+
+    #[test]
+    fn client_fingerprint_matches_only_a_computed_value() {
+        const JA4: &str = "t13d1516h2_8daaf6152771_e5627efa2ab1";
+        let fp = rdock_middleware::ClientFingerprint {
+            ja4: Some(std::sync::Arc::from(JA4)),
+            ja3: None,
+        };
+        let r = rule(&format!(
+            "ClientFingerprint(`{JA4}`, `ada70206e40642a3e4461f35503241d5`)"
+        ));
+        let facts = |fingerprint| TcpFacts {
+            hello: None,
+            client_ip: "10.0.0.1".parse().unwrap(),
+            fingerprint,
+        };
+        assert!(r.matches(&facts(Some(&fp))));
+        assert!(!r.matches(&facts(None)), "absent never matches");
+        // Negation is plain boolean logic: a connection without a fingerprint is not in the list.
+        let not = rule(&format!("!ClientFingerprint(`{JA4}`)"));
+        assert!(not.matches(&facts(None)));
+        assert!(!not.matches(&facts(Some(&fp))));
+    }
+
+    #[test]
+    fn geo_matchers_need_a_database() {
+        let expr = rdock_rules::parse("ClientCountry(`DE`)").unwrap();
+        let err = TcpRule::compile(&expr).unwrap_err();
+        assert!(err.to_string().contains("geoip.database"), "{err}");
     }
 
     #[test]

@@ -21,6 +21,7 @@ Configurations: [`configs/`](configs/). Versions are pinned in [`compose.yaml`](
 | `single` (default) | One route, one backend, plain HTTP | The cost of the proxy itself |
 | `lb` | Three backends, round-robin; they share the same 4 CPUs (1.33 each) | The load balancer |
 | `tls` | HTTPS with kept-alive connections, HTTP/1.1, a P-256 certificate | Encryption per request |
+| `tls-ramped` | Like `tls`, with the rate reached over 2 s (`RAMP`) instead of at once, so k6 opens its connections gradually | Whether the `tls` tail is the burst of handshakes at the start of a run (issue 181) |
 | `tls-new` | Like `tls`, with a new connection and TLS handshake for every request | Handshakes, the most expensive thing a proxy does. Latency here is k6's `iteration_duration`, because `http_req_duration` leaves out connecting and the handshake |
 | `slow` | The backend answers after 100 ms ([traefik/whoami](https://github.com/traefik/whoami) `?wait=100ms`) | Holding many requests open at once. Subtract the 100 ms when reading latency |
 | `routes` | 1,000 hosts, each with its own route, one chosen per request; [`gen-routes.py`](gen-routes.py) writes the configurations | Routing as a configuration grows. HAProxy uses plain ACLs in order, the way a hand-written configuration does; a map file would be faster |
@@ -64,7 +65,7 @@ perf stat -e task-clock,context-switches,cpu-migrations -p "$pid" -- sleep 30
 timeout -s INT 30 strace -c -f -p "$pid" -o rdock.strace           # syscalls per request
 ```
 
-Measure over the same 30 seconds as the `cpu.stat` ladder (µs per request = `usage_usec` ÷ (rate × 30)) so the numbers line up, and divide context switches and syscalls by the requests completed in that window. `perf` resolves symbols through `/proc/<pid>/root`, so the distroless image needs nothing extra. The profiling image is for measurement only; its numbers include a small cost for frame pointers, so publish results from release images.
+Measure over the same 30 seconds as the `cpu.stat` ladder ([`cpu-ladder.sh`](cpu-ladder.sh); µs per request = `usage_usec` ÷ requests, which the hand-run ladders took as rate × 30) so the numbers line up, and divide context switches and syscalls by the requests completed in that window. `perf` resolves symbols through `/proc/<pid>/root`, so the distroless image needs nothing extra. The profiling image is for measurement only; its numbers include a small cost for frame pointers, so publish results from release images.
 
 ## Reading the results
 
@@ -74,7 +75,7 @@ Measure over the same 30 seconds as the `cpu.stat` ladder (µs per request = `us
 
 ## In CI
 
-The [`bench`](../.github/workflows/bench.yml) workflow runs every night, on demand and on pull requests that change `benchmarks/`. It builds ReverseDock from the commit, runs it and NGINX in the same job at 5,000 and 10,000 req/s, and fails when [`compare.py`](compare.py) finds ReverseDock clearly behind NGINX: under 0.95× its throughput, a p99 above 2× NGINX's plus 5 ms, or more than 1 % failed requests. Since [#93](https://github.com/Docker-Hunterpedia/ReverseDock/issues/93) ReverseDock completes as much as NGINX at these rates on 2 CPUs with a p99 within 1.4× of it, so the limits leave room for the runner's jitter only. The results are kept as a workflow artifact for 30 days and shown in the job summary.
+The [`bench`](../.github/workflows/bench.yml) workflow runs every night, on demand and on pull requests that change `benchmarks/`. It builds ReverseDock from the commit, runs it and NGINX in the same job at 5,000 and 10,000 req/s, reads each proxy's CPU time from its cgroup at every rate (`CPU_STAT=1`, [`cpu-stat.sh`](cpu-stat.sh)), and fails when [`compare.py`](compare.py) finds ReverseDock clearly behind NGINX: under 0.98× its throughput (not 1.0: the runner's achieved rate rounds below the target by different amounts for each proxy), a p99 above 2× NGINX's plus 5 ms, more than 1 % failed requests, or more than 2.4× NGINX's CPU time per request (the lab measured 1.36× in v0.5 and 1.43× in v0.6; hosted runners read 1.32× to 2.18× for the same code on 2026-11-13, depending on the machine drawn, so the limit there only catches a large regression). Since [#93](https://github.com/Docker-Hunterpedia/ReverseDock/issues/93) ReverseDock completes as much as NGINX at these rates on 2 CPUs with a p99 within 1.4× of it, so the limits leave room for the runner's jitter only. The results are kept as a workflow artifact for 30 days and shown in the job summary.
 
 GitHub's shared runners are virtual machines whose speed changes from run to run, so these numbers are a regression check only and are never published. Running both proxies in one job cancels most of that noise. Published reports below come from fixed hardware.
 
@@ -102,6 +103,158 @@ DURATION=20m RELOAD_EVERY=60 FLAP_EVERY=180 CERT_EVERY=240 WINDOW=120 PROBE_EVER
 ```
 
 For a 24-hour run, copy `backend/` and `soak/` to a folder outside the checkout and start it there: bash reads `run.sh` while it runs, so switching branches in the checkout would break the run. Everything goes to `soak/work/`: `probe.csv`, the k6 windows, `events.csv`, ReverseDock's log and `report.md`. Requirements: Docker with Compose, Python 3 and `openssl`.
+
+## Hosted soak
+
+[`soak/hosted/`](soak/hosted/) is the soak that runs on a free GitHub-hosted runner, without Docker (H-ENG-02, H-ENG-03, ADR-0031 step 9). The weekly [`soak`](../.github/workflows/soak.yml) workflow runs it for 5 h 20 min; it can also be run by hand on any Linux machine.
+
+**What it stands in for, and what it does not show.** The roadmap's v0.9 criterion is a 24-hour soak at target RPS on a dedicated machine. Nobody has rented one, so that criterion is **open**. This job is a stand-in with a different, weaker claim: *in about five and a half hours on a shared 2- to 4-vCPU virtual machine, with 400 req/s, reloads and binary upgrades, rdock's memory, descriptors and threads showed no sustained rise, no request failed outside a tiny budget, and every upgrade kept its promises about held connections.* It does not show that nothing grows over 24 hours (see "What a 5-hour window can see" below), it says nothing about throughput or latency on real hardware (a hosted runner's speed changes from run to run), and it does not run at the rate or with the traffic of any production site. It has not run on a hosted runner yet at the time of writing: the weekly schedule starts after this is merged.
+
+### What runs
+
+`run.sh` starts, on loopback, two backends (`backend.py`, one asyncio process), one `rdock` copied from the release binary under test, and the load generator (`load.py`). Everything is Python 3 standard library and `openssl` (for a throw-away certificate); no new tool is pinned.
+
+- **rdock** ([`rdock.yaml`](soak/hosted/rdock.yaml)): an HTTP and an HTTPS listener; three routes (`/`, `/cached/` with the memory cache, `/stream/` for a WebSocket and an event stream), two backends behind `least_requests` with active and passive health checks and retries; a `rate_limit` keyed by a request header with 5,000 distinct values (far above the load, so nothing is refused, but every request goes through a bucket); a `headers` middleware that stamps the configuration generation; the JSON access log for every request (to `/dev/null`: five hours at 400 req/s are a few GB, and the formatting and the write still happen, but a slow log consumer is not tested); the admin API.
+- **Load**: open model, 400 req/s (`RATE`), one request due every 2.5 ms whatever the latency, latency counted from the due time. 35 % plain HTTP `/`, 30 % HTTPS `/`, 20 % and 10 % the cached route over HTTP and HTTPS, 5 % HTTPS with `Connection: close` (a new handshake each). Kept-alive connections are reused. A request fails when there is no answer, no 200, a wrong body, or no answer within 10 s. An idle kept-alive connection that the server had already closed (it answers nothing at all) is retried once on a new connection, as HTTP clients do for an idempotent GET ([RFC 9110 §9.2.2](https://www.rfc-editor.org/rfc/rfc9110#section-9.2.2)), and **counted** (`stale` in `load.csv`, shown in the report) instead of hidden.
+- **Held connections**: a WebSocket (over HTTPS) and a server-sent event stream (over HTTP) are kept open all the time and reopened when they close.
+- **Reload** every 5 minutes (`RELOAD_EVERY`): the configuration is rewritten with a new generation, reloaded over the admin socket, and the new generation must answer within 15 s.
+- **Binary upgrade** every 30 minutes (`UPGRADE_EVERY`) during the first half of the run (`UPGRADE_UNTIL`, 0.5): `POST /api/v1/upgrade` over the admin socket, the same file to itself, `upgrade.drain` 30 s. The driver follows the handover (the new pid comes from `/api/v1/status`), so sampling continues on it, and checks what the [upgrade guide](../apps/website/src/content/docs/docs/guides/upgrades.mdx) promises: the WebSocket and the event stream opened before the upgrade still deliver while the old process drains; they are closed when the drain ends (between `drain − 6 s` and `drain + 15 s` after the swap); the old process then exits; new held connections open and the new pid answers. The second half of the run has no upgrades, so one process runs alone for the memory judgment below. The ADR's "an upgrade every 30 minutes" is kept for the first half; the second half deliberately trades upgrades for sensitivity (every upgrade starts a fresh process, which resets a slow leak to zero).
+- **Samples** every 30 s (`SAMPLE_EVERY`) into `samples.csv`: RSS and PSS (`/proc/<pid>/smaps_rollup`; PSS is the memory rdock alone is charged for), open file descriptors, threads, the size of the data directory, and from rdock's own `/metrics` over the admin socket the counters of requests, 5xx answers, upstream errors and connections, the open connections and the cache's objects and bytes.
+
+Outputs in the work folder (`OUT`, `soak/hosted/work/` by default, ignored by git): `samples.csv`, `load.csv` (one row per 10 s), `failures.csv`, `events.csv` (every reload, upgrade and check), `meta.json`, `rdock.log`, `report.md`, `analysis.json`. The workflow uploads them (not the copy of the binary, the data directory or the throw-away TLS key) as an artifact for 90 days and shows the report in the job summary.
+
+### What fails the run
+
+`analyze.py` exits 1 when any of these fails (3 when a trend had too little data, which a full run never has):
+
+| Check | Rule |
+|---|---|
+| Run completed | At least 98 % of the time, rdock never down, at least 85 % of the samples |
+| Failed requests | At most 0.001 % (⌊10⁻⁵ × requests⌋), counted **separately** for requests inside an upgrade window (2 s before the call to 10 s after it) or a reload window (2 s before to 5 s after) and for all others. A full run sends about 7.7 million requests (400 × 19,200 s); the windows cover roughly 3 % of them (63 reloads and 5 upgrades), so the rule allows about 75 failures outside the windows and about 2 inside (arithmetic from the schedule, not a measurement). The upgrade guide promises that no connection attempt is refused or reset, so any failure inside an upgrade window is a finding to read, not noise; the allowance is for a shared machine's stalls |
+| Upgrades | Every one answers 200 with a new pid that then serves; at least `MIN_UPGRADES` |
+| Held connections | Every check of "Held connections" above passes |
+| Reloads | Every one answers 200 and the new generation answers |
+| Log | No `panicked`, no `configuration rejected` |
+| Memory (PSS), descriptors, threads | The trend rules below |
+| Latency | The median window p99 of the last quarter is at most 3 × the first quarter's plus 5 ms |
+
+### The memory rule
+
+An upgrade starts a new process with nothing in it, so growth is judged **per process**, never across the run. For each process:
+
+1. discard its first 600 s (the cache fills, pools and the allocator settle);
+2. judge it only when at least 900 s and 20 samples remain (a 30-minute process leaves 20 minutes);
+3. take **level** = the median of the first quarter of what remains, **slope** = the Theil–Sen estimate (the median of the slopes between all pairs of points), and **delta** = the median of the last quarter minus the median of the second;
+4. flag **memory** when both hold: the slope projected over 24 h exceeds **10 % of the level**, and delta exceeds **max(1 MiB, 1 % of the level)**. Descriptors are flagged when slope × window and delta both exceed max(16, 5 % of the level), threads when both exceed max(4, 10 % of the level).
+
+The run **fails** when the longest judged process is flagged (the run ends with one long process, about 2 h 50 min in the default run), or when at least three processes were judged and more than half are flagged (a leak in every generation, however short).
+
+*Why this shape.* The projection alone would turn a few hundred KiB of noise over a 15-minute window into tens of MiB a day (a 5-hour run extrapolated to 24 h multiplies noise by five or more); delta alone would flag a step that already settled. Together they ask for growth that continues and is larger than noise. The Theil–Sen slope is used instead of least squares because spikes (a transient burst of memory the allocator keeps for a while) move a least-squares line and barely move this one; a step early or late in the window also moves it little. The unit tests in [`test_analyze.py`](soak/hosted/test_analyze.py) pin the behaviour on synthetic series: flat, noisy flat (with spikes), a cache-fill step early and later, a slow leak, a sawtooth, descriptor and thread growth, restarts with warm-up, a leak in every short process, and the failure budget. They run in the workflow before the soak (and on pull requests that touch the soak), and `run.sh` runs them first.
+
+*What a 5-hour window can see.* On the shape of the default run, the tests show that a leak of 0.5 MiB an hour on a 100 MiB process (12 % a day) **passes** and 1 MiB an hour (24 % a day) **fails**. 1 MiB an hour at 400 req/s is about 0.7 bytes per request, or 85 KiB per reload, so a per-request or per-reload leak of any size is visible. A leak that is slower, or one that only shows after many hours (a table that fills over a day, a certificate store, a log of events), is not, and a **24-hour soak is still needed for those** (open). A step in the middle of the run (a one-off rise of 20 % half way) is indistinguishable from growth by these statistics and is flagged.
+
+*False alarms to expect.* Allocators keep freed memory (per-thread caches, arenas, pages returned lazily) and return it on their own schedule, so after a change in traffic PSS can step up, creep for a while and fall back later; a creep that has not finished 10 minutes after the start can pass the rule on a short window and be a false alarm. The cache (400 objects of 2 KiB with a 30 s lifetime) and the rate limit's bucket table (5,000 keys) churn constantly, which fragments memory slowly; a very slow creep that stops is the typical case. Hosted runners are shared virtual machines: a noisy neighbour changes timing (latency, the stale-connection count, an occasional failure) but not rdock's PSS, descriptors or threads, so the trend checks are less affected than the request checks. When the job fails on a trend, read the `Over time` table and the per-process table of `report.md` before concluding that it is a leak; if one is real, it repeats the next week.
+
+### Run it
+
+```sh
+cargo build --locked --release -p rdock
+benchmarks/soak/hosted/run.sh                       # 5 h 20 min, like the weekly job
+# A smoke run (what the 2026-11-13 results are), with a short warm-up so the trend checks have data:
+DURATION=10m RATE=400 SAMPLE_EVERY=10 RELOAD_EVERY=90 UPGRADE_EVERY=150 UPGRADE_UNTIL=0.7 MIN_UPGRADES=2 MIN_RELOADS=2 \
+  ANALYZE_ARGS="--warmup 60 --min-tail 120 --allow-inconclusive" benchmarks/soak/hosted/run.sh
+python3 -I benchmarks/soak/hosted/test_analyze.py   # the analysis rules, against synthetic runs
+```
+
+`run.sh` documents its settings (`RDOCK`, `OUT`, `DURATION`, `RATE`, `SAMPLE_EVERY`, `RELOAD_EVERY`, `UPGRADE_EVERY`, `UPGRADE_UNTIL`, `DRAIN`, `LABEL`, `MIN_UPGRADES`, `MIN_RELOADS`, `ANALYZE_ARGS`). Needs Linux, Python 3 and `openssl`. The soak runs a copy of the binary, so rebuilding `target/release/rdock` meanwhile is harmless.
+
+Results of the smoke run: [results/2026-11-13-soak-smoke/](results/2026-11-13-soak-smoke/report.md). **It is a smoke run on a shared 4-vCPU development sandbox: it proves that the driver, the pid-following and the analysis work end to end. It is not a result.**
+
+## CPU scaling
+
+How throughput and CPU per request change with the CPUs given to rdock (H-PERF-01, ADR-0031 step 9). `perreq/run.sh scaling` runs one `rdock` pinned (`taskset`) to the first 1, 2 and 4 CPUs with `runtime.worker_threads` set to the same number, and `rdock-perreq scale` drives it by **closed-loop saturation** (64 kept-alive connections, each sending the next request as soon as the last answer is in) for 20 s after a 5 s warm-up, three rounds with the sizes in alternating order. The backend (1 KiB answers) and the generator are one process on the other CPUs.
+
+It reports, per size: requests per second and CPU time per request (`/proc/<pid>/task/*/schedstat` over the measured phase) as a median and a range over the rounds; how busy rdock's CPUs were and how busy the tool's (the tool is the client and the backend together); the ratio to one CPU and the efficiency (ratio ÷ CPUs); and a **Reading** column that says when a figure cannot be taken at face value:
+
+- **At 4 CPUs on a 4-vCPU machine nothing is left for the generator**, so it shares the cores with the proxy: that row is a **lower bound**, not a clean measurement, and says so. The same holds for any size equal to the machine's CPU count. The 1- and 2-CPU rows leave 3 and 2 CPUs to the tool.
+- A row where rdock's CPUs were not (nearly) all busy says rdock was not the limit.
+- A row where the tool used 90 % or more of its CPUs says the tool may have been the limit.
+
+This measures peak throughput, not latency (a closed loop hides a stalling proxy's tail; the k6 scenarios and the soak measure latency). It is plain HTTP/1.1 with one route and no features, so it is the scaling of the proxy's core path only. **8 CPUs are not measured** (no free hosted runner has them), and **no dedicated-hardware number exists yet**: the 4- and 8-CPU measurements of the roadmap stay open.
+
+```sh
+cargo build --locked --release -p rdock -p rdock-perreq
+benchmarks/perreq/run.sh scaling target/release/rdock out/ 3        # SIZES="1 2 4" SCALE_SECONDS=20 SCALE_WARMUP=5 SCALE_CONNS=64
+python3 -I benchmarks/perreq/summarize.py scaling out/
+```
+
+The [`scaling`](../.github/workflows/scaling.yml) workflow does this on a hosted runner, by hand only (`workflow_dispatch`), uploads `scaling.jsonl` and `machine.txt` and shows the table in the job summary; it gates nothing. Hosted runners are noisy: read the ranges, and do not compare a hosted-runner run with the lab's. Results of the smoke run: [results/2026-11-13-scaling-smoke/](results/2026-11-13-scaling-smoke/report.md), on the same shared sandbox as the soak smoke: **not a result**.
+
+## Allocator comparison
+
+mimalloc is the allocator of every release build. For H-PERF-06 the binary has a cargo feature `jemalloc` (`tikv-jemallocator`, off by default, never in a release build or image; it builds jemalloc from C source and needs `make`): `cargo build --locked --release -p rdock --features jemalloc` replaces mimalloc. Pass `LABEL=jemalloc` to the soak so the report says which allocator ran, and run `scaling` or the soak with that binary and with the default one, on the same machine, one after the other. jemalloc's runtime options go in `_RJEM_MALLOC_CONF` (this crate prefixes them), for example `background_thread:true`. The comparison matrix itself, and the sizing page that would come from it, are **not done**: they need measurements on hardware that is not a shared runner.
+
+## Per-request cost without Docker
+
+`rdock-perreq` measures one proxied HTTP/1.1 request on the machine it runs on, without Docker
+and without k6, so a change to the request path can be checked in a development sandbox
+(issue 181, ADR-0031). It starts a locally built `rdock` on a generated configuration, in front
+of a backend inside the tool that answers every request with 1 KiB, and sends requests over
+kept-alive connections.
+
+Each measurement sends a warm-up (at least one request per route), then **N** and then **2N**
+requests, and reports the second phase minus the first, divided by N, so start-up and anything
+that does not grow with the request count cancel out.
+
+| Reading | How | Exact? |
+|---|---|---|
+| Allocations | A binary built with the bench-only `alloc-count` cargo feature counts every allocation (the system allocator wrapped by `stats_alloc`) and answers on the Unix socket named by `RDOCK_ALLOC_COUNT_SOCKET`. The feature replaces mimalloc and does not compile with `--release`. | Yes |
+| System calls | `strace -c -f` attached to the process for each phase. | The calls a request makes (`recvfrom`, `sendto`, `getpeername`, `writev`) are exact; `futex` and `epoll_wait` depend on timing and vary by a few tenths per request between runs. |
+| CPU time | The sum of `/proc/<pid>/task/*/schedstat` (time on a CPU) over the process's threads, in a release build. | No: relative. Compare two builds on the same machine, interleaved, against an A/A noise floor. |
+
+### Variants
+
+`run.sh` measures five variants: 1, 1,000 and 10,000 routes (one host each, requests spread
+over all of them), one route with 20 browser-like request headers instead of k6's three, and
+HTTPS on a reused connection.
+
+### Run it
+
+```sh
+# Counts (debug build: allocations and system calls do not depend on optimisation)
+cargo build --locked -p rdock --features alloc-count && cp target/debug/rdock /tmp/rdock-alloc
+cargo build --locked -p rdock-perreq
+PERREQ=target/debug/rdock-perreq benchmarks/perreq/run.sh counts /tmp/rdock-alloc out/
+
+# CPU time: two release builds, A (before) and B (after), interleaved
+cargo build --locked --release -p rdock -p rdock-perreq
+benchmarks/perreq/run.sh cpu /tmp/rdock-a /tmp/rdock-b out/ 5
+
+# The TLS-tail experiment (issue 181 step 4), without and with a handshake bound
+benchmarks/perreq/run.sh tail target/release/rdock out/
+benchmarks/perreq/run.sh tail target/release/rdock out/ 32
+
+python3 -I benchmarks/perreq/summarize.py counts out/          # or: counts before/ after/
+python3 -I benchmarks/perreq/summarize.py cpu out/
+python3 -I benchmarks/perreq/summarize.py tail out/
+```
+
+rdock runs on CPUs `0,1` and the tool on `2,3` (`RDOCK_CPUS`, `TOOL_CPUS`), as in the lab's 2-CPU
+rung. Needs Linux, `strace` and `taskset`.
+
+**CPU time.** Each round runs A, B, A for every variant. The spread of the A runs, (max − min)
+÷ median, is the noise floor; `summarize.py` calls a B/A change a difference only when it is
+larger than twice that, and "within noise" otherwise. Run it on an otherwise idle machine and
+claim only relative numbers: no absolute microsecond figure from a sandbox stands for the lab.
+
+**The tail experiment.** Eight established TLS connections send 2,000 requests a second on a
+fixed schedule (latency counts from when a request was due). Three seconds in, a second process
+on the other tool CPU opens 500 new TLS connections, all at once (as k6 does at the start of a
+run) or spread over 2 s, and each sends one request and stays open. The output is the latency of
+the established connections' requests during the burst and outside it, and the burst's own
+handshake times.
+
+Results: [results/2026-11-13-perreq/report.md](results/2026-11-13-perreq/report.md).
 
 ## Admin isolation test
 
@@ -132,3 +285,4 @@ The first runs found that the admin side's own threads do not protect the proxy 
 | main at 36f64a9, 2026-11-02 (small CPUs, #93): all scenarios, all proxies, before and after, large bodies | Hetzner dedicated server, 8 vCPUs, 32 GiB, Ubuntu 26.04 | [results/2026-11-02-small-cpu/report.md](results/2026-11-02-small-cpu/report.md) |
 | main at 36f64a9, 2026-11-02 to 11-03: 24-hour soak (v0.5 release candidate) | same | [results/2026-11-02-small-cpu/soak/report.md](results/2026-11-02-small-cpu/soak/report.md) |
 | main at c71a538, 2026-11-07 (v0.6): six scenarios against NGINX and HAProxy, CPU ladder, 2-hour soak, 3-node Swarm | same | [results/2026-11-07-v06/report.md](results/2026-11-07-v06/report.md) |
+| main at 5c7d7f8 (0.8.0-alpha.1) and the v0.9 per-request changes, 2026-11-13: allocations, system calls and CPU per request, TLS tail during a handshake burst (`perreq`, no Docker; CPU relative only) | Development sandbox, 4 shared vCPUs | [results/2026-11-13-perreq/report.md](results/2026-11-13-perreq/report.md) |

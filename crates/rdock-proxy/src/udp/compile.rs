@@ -22,16 +22,22 @@ pub(crate) fn compile_udp(
     config: &Config,
     env: &CompileEnv<'_>,
     listeners: &mut BTreeMap<String, ListenerRuntime>,
+    geoip: Option<&Arc<crate::geoip::GeoIp>>,
     out: &mut Vec<Diagnostic>,
 ) -> BTreeMap<String, Arc<ServiceRuntime>> {
     let services: HashMap<&str, Arc<UdpServiceRuntime>> = config
         .udp_services
         .iter()
-        .map(|(name, service)| (name.as_str(), Arc::new(compile_service(name, service, env))))
+        .map(|(name, service)| {
+            (
+                name.as_str(),
+                Arc::new(compile_service(name, service, config, env)),
+            )
+        })
         .collect();
     let mut attached: BTreeMap<&str, Vec<Arc<UdpRouteRuntime>>> = BTreeMap::new();
     for (name, route) in config.udp_routes.iter().filter(|(_, r)| r.enabled) {
-        let Some(compiled) = compile_route(name, route, config, &services, out) else {
+        let Some(compiled) = compile_route(name, route, config, &services, geoip, out) else {
             continue;
         };
         for listener_name in route.listeners.iter().flatten() {
@@ -63,7 +69,12 @@ pub(crate) fn compile_udp(
         .collect()
 }
 
-fn compile_service(name: &str, service: &UdpService, env: &CompileEnv<'_>) -> UdpServiceRuntime {
+fn compile_service(
+    name: &str,
+    service: &UdpService,
+    config: &Config,
+    env: &CompileEnv<'_>,
+) -> UdpServiceRuntime {
     let (balancer, hash_on) = match service.load_balancer.policy {
         UdpLbPolicy::RoundRobin => (Balancer::RoundRobin(RoundRobin::default()), HashOn::Nothing),
         UdpLbPolicy::Random => (Balancer::Random, HashOn::Nothing),
@@ -114,6 +125,11 @@ fn compile_service(name: &str, service: &UdpService, env: &CompileEnv<'_>) -> Ud
         timeouts: rdock_model::service::Timeouts::default(),
         tls: crate::runtime::UpstreamTls::default(),
         pass_host_header: false,
+        allowed: None,
+        selection: crate::runtime::Selection {
+            zone: crate::compile::preferred_zone(config, None),
+            ..crate::runtime::Selection::default()
+        },
     };
     let passive = health.passive;
     UdpServiceRuntime {
@@ -127,6 +143,7 @@ fn compile_service(name: &str, service: &UdpService, env: &CompileEnv<'_>) -> Ud
                 failures: passive.failures,
                 window: passive.window.as_std(),
                 ejection: passive.ejection.as_std(),
+                jitter: std::time::Duration::ZERO,
             },
             passive.max_ejection_percent,
         )),
@@ -138,6 +155,7 @@ fn compile_route(
     route: &UdpRoute,
     config: &Config,
     services: &HashMap<&str, Arc<UdpServiceRuntime>>,
+    geoip: Option<&Arc<crate::geoip::GeoIp>>,
     out: &mut Vec<Diagnostic>,
 ) -> Option<Arc<UdpRouteRuntime>> {
     let path = path_key("udp_routes", name);
@@ -151,7 +169,7 @@ fn compile_route(
                     if let Some(err) = errors.first() {
                         return Err(err.to_string());
                     }
-                    TcpRule::compile(&expr).map_err(|e| e.to_string())
+                    TcpRule::compile_with(&expr, geoip).map_err(|e| e.to_string())
                 });
             match compiled {
                 Ok(rule) => Some(rule),

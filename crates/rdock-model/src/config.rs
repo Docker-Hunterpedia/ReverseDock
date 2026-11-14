@@ -12,8 +12,8 @@ use crate::middleware::Middleware;
 use crate::providers::Providers;
 use crate::route::{Route, RouteTls, TcpRoute, TlsMode, UdpRoute};
 use crate::service::{Service, TcpService, UdpService};
-use crate::settings::{Admin, Lifecycle, Observability, Security};
-use crate::values::{Duration, IpNetwork, ListenAddress};
+use crate::settings::{Admin, Lifecycle, Observability, RuntimeSettings, Security};
+use crate::values::{ByteSize, Duration, IpNetwork, ListenAddress};
 
 /// A complete ReverseDock configuration, as written in `rdock.yaml`.
 ///
@@ -67,9 +67,36 @@ pub struct Config {
     pub observability: Observability,
     /// Start-up and shutdown behaviour.
     pub lifecycle: Lifecycle,
+    /// The proxy's worker threads; read at start, so a change needs a restart.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<RuntimeSettings>,
+    /// In-place binary upgrades (`rdock upgrade`, `SIGUSR2`): the binary, the drain bound and
+    /// the start timeout.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upgrade: Option<crate::settings::Upgrade>,
     /// External secret stores that secret fields can reference (`${vault:…}`).
     #[serde(skip_serializing_if = "crate::secrets::Secrets::is_empty")]
     pub secrets: crate::secrets::Secrets,
+    /// The proxy's own zone and whether services prefer backends in it (H-HA-05).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub locality: Option<crate::settings::Locality>,
+    /// GeoIP databases for `ClientCountry`, `ClientContinent` and `ClientASN` (H-SEC-04). No
+    /// database is bundled or downloaded.
+    // Boxed: the configuration is held across awaits by reloads; this keeps it small.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub geoip: Option<Box<crate::settings::GeoIp>>,
+    /// Membership of a cluster (H-HA-01…03): the control plane this data plane takes its
+    /// configuration from, and where certificates are shared.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cluster: Option<Box<crate::cluster::Cluster>>,
+    /// Tenants of the admin API (H-SEC-07): API tokens and users scoped to a tenant read and
+    /// write only the API objects under its name prefix, whose routes stay inside its host
+    /// claims. Without this section, nothing is scoped.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub tenants: crate::tenant::Tenants,
+    /// The control plane's own settings, read only by `rdock control run`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub control: Option<Box<crate::cluster::ControlPlane>>,
 }
 
 impl Config {
@@ -226,6 +253,358 @@ pub struct Listener {
     /// upstream socket) may exist at once. Capped by default even when omitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sessions: Option<UdpSessions>,
+    /// Options of the listening socket and of the connections it accepts (ADR-0031). Unset
+    /// options keep the kernel's behaviour, except `backlog`, which defaults to 4096.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub socket: Option<ListenerSocket>,
+    /// HTTP/2 settings of `http` (h2c) and `https` listeners (H-PERF-03, ADR-0031). Unset
+    /// values keep the behaviour before v0.9.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http2: Option<ListenerHttp2>,
+    /// HTTP/3 over QUIC on the same address, `https` listeners only (experimental, ADR-0032):
+    /// the listener then also owns the UDP socket of its address. Needs a build with the
+    /// `http3` cargo feature; off by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http3: Option<ListenerHttp3>,
+}
+
+/// HTTP/3 settings of an `https` listener (experimental, ADR-0032). Every limit is bounded;
+/// nothing is unlimited.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent switches of the configuration file"
+)]
+pub struct ListenerHttp3 {
+    /// Serve HTTP/3 on the UDP port of the listener's address. Default `false`.
+    pub enabled: bool,
+    /// Add `Alt-Svc: h3=":<port>"` to this listener's HTTP/1 and HTTP/2 responses while the
+    /// QUIC endpoint serves (RFC 9114 §3.1.1). Default `true`.
+    pub advertise: bool,
+    /// How long clients may remember the advertisement (`ma`). Default 1h (RFC 7838's default
+    /// is 24h; shorter while experimental); 1s to 30d.
+    pub advertise_max_age: Duration,
+    /// The UDP port to advertise when it differs from the listener's (a port mapping such as
+    /// public 443 to container 8443). Default: the listener's port.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub advertise_port: Option<u16>,
+    /// When to make clients prove their address with a QUIC Retry before any handshake work
+    /// (RFC 9000 §8.1.2). `auto` (default) sends Retry while 100 or more connections are
+    /// half-open (HAProxy's `tune.quic.retry-threshold`); `always`; `never` drops that
+    /// threshold only. Whatever the setting, a client whose address is not yet validated is
+    /// sent Retry instead of being refused when the listener is full, when its address already
+    /// holds `max_connections_per_client` connections or handshakes, and once half-open
+    /// connections reach half of `max_connections`: spoofed packets can neither lock a client
+    /// out nor fill the listener.
+    pub retry: Http3Retry,
+    /// Close a connection with no activity for this long (QUIC `max_idle_timeout`). Default
+    /// 30s (HAProxy's); 1s to 10m.
+    pub max_idle: Duration,
+    /// Request streams a client may have open at once per connection
+    /// (`initial_max_streams_bidi`). Default 100; 1 to 10000.
+    pub max_concurrent_streams: u32,
+    /// Largest request header section (`SETTINGS_MAX_FIELD_SECTION_SIZE`, counted as RFC 9114
+    /// §4.2.2 does: name + value + 32 bytes per field). Default 64KiB; 1KiB to 768KiB, and at
+    /// most `receive_window`.
+    pub max_header_size: ByteSize,
+    /// QUIC connections the listener holds at once. Default 1000; 1 to 1000000. Worst-case
+    /// memory is `max_connections × (2 × receive_window + send_window)`: about 3 GiB with the
+    /// defaults; validation warns above 4 GiB.
+    pub max_connections: u32,
+    /// QUIC connections one client holds at once. A client is one IPv4 address, or one IPv6
+    /// prefix of `client_ipv6_prefix` bits. Only connections whose address is validated count.
+    /// Default 100; 1 to `max_connections`.
+    pub max_connections_per_client: u32,
+    /// The IPv6 prefix length that counts as one client for `max_connections_per_client`.
+    /// Default 64 (one subscriber's network, RFC 6177); 32 to 128.
+    pub client_ipv6_prefix: u8,
+    /// Request body a client may send on one stream before rdock reads it (QUIC
+    /// `initial_max_stream_data_bidi_remote`). Default 512KiB; 16KiB to 16MiB, and at most
+    /// `receive_window`.
+    pub stream_receive_window: ByteSize,
+    /// Data a client may send on the whole connection before rdock reads it (QUIC
+    /// `initial_max_data`). rdock also holds at most this much of incomplete HEADERS and other
+    /// non-DATA frames per connection. Default 1MiB; 64KiB to 64MiB.
+    pub receive_window: ByteSize,
+    /// Response data rdock buffers per connection for a client that has not acknowledged it
+    /// yet. Default 1MiB; 64KiB to 64MiB.
+    pub send_window: ByteSize,
+    /// Congestion controller. Default `cubic`.
+    pub congestion: Http3Congestion,
+    /// UDP generic segmentation offload where the kernel supports it. Default `true`.
+    pub gso: bool,
+    /// Write qlog traces into this directory. Not supported in this version (planned).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub qlog: Option<String>,
+    /// Accept 0-RTT early data. Not supported (planned): early data can be replayed.
+    pub early_data: bool,
+    /// Let clients move a connection to another address (active migration). Not supported
+    /// (planned). With migration off, quinn 0.11 drops packets from a new address, so a client
+    /// whose NAT rebinds loses the connection and reconnects.
+    pub migration: bool,
+    /// HTTP/3 datagrams (RFC 9297). Not supported (planned).
+    pub datagrams: bool,
+    /// WebTransport over HTTP/3. Not supported (planned).
+    pub webtransport: bool,
+    /// Extended CONNECT (RFC 9220 WebSocket over HTTP/3, RFC 9298 CONNECT-UDP). Not supported
+    /// (planned).
+    pub extended_connect: bool,
+}
+
+impl ListenerHttp3 {
+    /// Default `max_header_size`.
+    pub const DEFAULT_MAX_HEADER_SIZE: ByteSize = ByteSize::kib(64);
+    /// Ceiling of `max_header_size`. h3 0.0.8 builds an `http::HeaderMap` with one slot per
+    /// field (`HeaderMap::with_capacity`), which panics from 24,577 fields in http 1.5 (the
+    /// capacity plus a third must stay within 2^15). h3 counts at least 32 bytes per field, so
+    /// 768 KiB admits at most 24,576 fields.
+    pub const MAX_HEADER_SIZE_CEILING: ByteSize = ByteSize::kib(768);
+    /// Half-open connections from which `retry: auto` sends Retry.
+    pub const RETRY_THRESHOLD: usize = 100;
+    /// Default `max_connections`.
+    pub const DEFAULT_MAX_CONNECTIONS: u32 = 1000;
+    /// Default `stream_receive_window`.
+    pub const DEFAULT_STREAM_RECEIVE_WINDOW: ByteSize = ByteSize::kib(512);
+    /// Default `receive_window`.
+    pub const DEFAULT_RECEIVE_WINDOW: ByteSize = ByteSize::mib(1);
+    /// Default `send_window`.
+    pub const DEFAULT_SEND_WINDOW: ByteSize = ByteSize::mib(1);
+    /// Worst-case memory above which validation warns.
+    pub const MEMORY_WARNING: u64 = 4 << 30;
+
+    /// The worst-case memory the listener's QUIC connections may hold, in bytes:
+    /// `max_connections × (2 × receive_window + send_window)` (unread data quinn holds, incomplete
+    /// frames h3 holds, unacknowledged response data).
+    #[must_use]
+    pub fn worst_case_memory(&self) -> u64 {
+        u64::from(self.max_connections).saturating_mul(
+            self.receive_window
+                .as_u64()
+                .saturating_mul(2)
+                .saturating_add(self.send_window.as_u64()),
+        )
+    }
+}
+
+impl Default for ListenerHttp3 {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            advertise: true,
+            advertise_max_age: Duration::from_secs(3600),
+            advertise_port: None,
+            retry: Http3Retry::Auto,
+            max_idle: Duration::from_secs(30),
+            max_concurrent_streams: 100,
+            max_header_size: Self::DEFAULT_MAX_HEADER_SIZE,
+            max_connections: Self::DEFAULT_MAX_CONNECTIONS,
+            max_connections_per_client: 100,
+            client_ipv6_prefix: 64,
+            stream_receive_window: Self::DEFAULT_STREAM_RECEIVE_WINDOW,
+            receive_window: Self::DEFAULT_RECEIVE_WINDOW,
+            send_window: Self::DEFAULT_SEND_WINDOW,
+            congestion: Http3Congestion::Cubic,
+            gso: true,
+            qlog: None,
+            early_data: false,
+            migration: false,
+            datagrams: false,
+            webtransport: false,
+            extended_connect: false,
+        }
+    }
+}
+
+/// When an HTTP/3 listener sends QUIC Retry packets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Http3Retry {
+    /// While 100 or more connections are half-open.
+    #[default]
+    Auto,
+    /// For every new connection without a valid token.
+    Always,
+    /// Not proactively; Retry is still sent when the listener is full, when the client is at
+    /// its limit, or once half-open connections reach half of `max_connections`.
+    Never,
+}
+
+/// QUIC congestion controllers (quinn 0.11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Http3Congestion {
+    /// CUBIC (RFC 9438).
+    #[default]
+    Cubic,
+    /// `NewReno` (RFC 9002 §7).
+    Newreno,
+    /// BBR; quinn marks its implementation experimental.
+    Bbr,
+}
+
+/// HTTP/2 settings of a listener (RFC 9113 §6.5.2). Unset values keep what Pingora 0.9.1 and
+/// h2 0.4.20 do; the limits that protect against stream and reset floods can only be removed
+/// by writing `unlimited`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ListenerHttp2 {
+    /// Streams a client may have open at once (`SETTINGS_MAX_CONCURRENT_STREAMS`). Default 100
+    /// (Pingora's bound); at most 10000 unless `unlimited`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_concurrent_streams: Option<FloodLimit>,
+    /// Flow-control window of each stream (`SETTINGS_INITIAL_WINDOW_SIZE`): how much request
+    /// body a client may send before rdock reads it. Default 65535 bytes (the protocol's
+    /// initial value); at most 2^31-1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial_stream_window: Option<ByteSize>,
+    /// Flow-control window of the whole connection. Default 65535 bytes; 65535 to 2^31-1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial_connection_window: Option<ByteSize>,
+    /// Largest frame payload rdock accepts (`SETTINGS_MAX_FRAME_SIZE`). Default 16384; 16384
+    /// to 16777215 (RFC 9113 §6.5.2).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_frame_size: Option<ByteSize>,
+    /// Largest decoded request header list (`SETTINGS_MAX_HEADER_LIST_SIZE`). Default 64KiB
+    /// (Pingora's bound); 1KiB to 16MiB.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_header_list_size: Option<ByteSize>,
+    /// Streams a client may reset before rdock accepted them, at once (the HTTP/2 Rapid Reset
+    /// mitigation, CVE-2023-44487). Default 20 (h2's); at most 10000 unless `unlimited`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_pending_accept_reset_streams: Option<FloodLimit>,
+    /// Streams rdock resets because the client misbehaved before the connection is closed (the
+    /// `MadeYouReset` mitigation, CVE-2025-8671). Default 1024 (h2's); at most 100000 unless
+    /// `unlimited`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_local_error_reset_streams: Option<FloodLimit>,
+    /// Response data buffered per stream for a client that reads slowly. Default 400KiB (h2's);
+    /// 16KiB to 16MiB.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_send_buffer: Option<ByteSize>,
+}
+
+/// A limit that guards against a flood: a number, or `unlimited` to remove it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FloodLimit {
+    /// At most this many.
+    Count(u32),
+    /// No limit.
+    Unlimited,
+}
+
+impl Serialize for FloodLimit {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Count(n) => serializer.serialize_u32(*n),
+            Self::Unlimited => serializer.serialize_str("unlimited"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for FloodLimit {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Count(u64),
+            Word(String),
+        }
+        match Raw::deserialize(deserializer)? {
+            Raw::Count(n) => u32::try_from(n)
+                .map(Self::Count)
+                .map_err(|_| serde::de::Error::custom("too large; write `unlimited` for no limit")),
+            Raw::Word(w) if w == "unlimited" => Ok(Self::Unlimited),
+            Raw::Word(w) => Err(serde::de::Error::custom(format!(
+                "`{w}` is not a number or `unlimited`"
+            ))),
+        }
+    }
+}
+
+impl JsonSchema for FloodLimit {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("FloodLimit")
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "A number, or `unlimited` to remove the limit.",
+            "oneOf": [
+                { "type": "integer", "minimum": 1, "maximum": 4_294_967_295_u64 },
+                { "type": "string", "enum": ["unlimited"] }
+            ]
+        })
+    }
+}
+
+/// Socket options of a listener. Options that do not apply to the listener's transport are
+/// refused, and so are options this platform cannot set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ListenerSocket {
+    /// TCP: how many connections the kernel holds that have completed their handshake and
+    /// that ReverseDock has not accepted yet. Default 4096, Linux's `net.core.somaxconn`
+    /// default since 5.4, which also caps it (before v0.9 it was 128).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backlog: Option<u32>,
+    /// TCP: `SO_REUSEPORT`, so several sockets (or processes) can bind the same address and
+    /// the kernel spreads connections over them. Off by default: with it, another process of
+    /// the same user can bind the address unnoticed. Refused on `udp` listeners.
+    pub reuse_port: bool,
+    /// `SO_RCVBUF`: the receive buffer, set before `listen` so the TCP window scale is
+    /// negotiated with it. Unset: the kernel's automatic sizing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub receive_buffer: Option<ByteSize>,
+    /// `SO_SNDBUF`: the send buffer. Unset: the kernel's automatic sizing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub send_buffer: Option<ByteSize>,
+    /// TCP keep-alive probes on accepted connections. Unset: off, as the kernel does.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keepalive: Option<TcpKeepalive>,
+    /// TCP: `TCP_USER_TIMEOUT` on accepted connections, how long sent data may stay
+    /// unacknowledged before the connection is dropped. Linux only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_timeout: Option<Duration>,
+    /// TCP: accept TCP Fast Open with this many pending requests (`TCP_FASTOPEN`). The kernel
+    /// must allow it for servers (`net.ipv4.tcp_fastopen` bit 2). Linux only; off by default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fast_open: Option<u32>,
+    /// `IPV6_V6ONLY` for an IPv6 or all-interfaces (`:port`) address: `true` serves IPv6 only,
+    /// `false` IPv6 and IPv4. Unset: the system's default (`net.ipv6.bindv6only`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ipv6_only: Option<bool>,
+    /// DSCP value (0–63) of the traffic sent on accepted connections (the top six bits of
+    /// IPv4's TOS byte or IPv6's traffic class).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dscp: Option<u8>,
+}
+
+impl ListenerSocket {
+    /// The listen backlog when `backlog` is not set.
+    pub const DEFAULT_BACKLOG: u32 = 4096;
+
+    /// The listen backlog in effect.
+    #[must_use]
+    pub fn effective_backlog(&self) -> u32 {
+        self.backlog.unwrap_or(Self::DEFAULT_BACKLOG)
+    }
+}
+
+/// TCP keep-alive on accepted connections (`SO_KEEPALIVE`). Unset values keep the kernel's
+/// (Linux: 7200 s idle, 75 s between probes, 9 probes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct TcpKeepalive {
+    /// Idle time before the first probe (`TCP_KEEPIDLE`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idle: Option<Duration>,
+    /// Time between probes (`TCP_KEEPINTVL`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval: Option<Duration>,
+    /// Unanswered probes before the connection is dropped (`TCP_KEEPCNT`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
 }
 
 impl Listener {
@@ -241,7 +620,16 @@ impl Listener {
             timeouts: ListenerTimeouts::default(),
             ping: None,
             sessions: None,
+            socket: None,
+            http2: None,
+            http3: None,
         }
+    }
+
+    /// The socket options, with the defaults when `socket` is omitted.
+    #[must_use]
+    pub fn socket(&self) -> ListenerSocket {
+        self.socket.unwrap_or_default()
     }
 
     /// The protocol in effect, inferring `https`/`http` from `tls` when not set.
@@ -415,6 +803,117 @@ pub struct ListenerTls {
     /// serves the shared certificates (`certificates`, automatic ones, `defaults.certificate`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub certificates: Vec<String>,
+    /// `https` listeners: TLS handshakes in progress at once. While the bound is reached, new
+    /// connections wait in the listen backlog instead of taking CPU from established ones.
+    /// Unset: no bound (ADR-0031).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_handshakes: Option<u32>,
+    /// Session tickets (stateless resumption, H-PERF-02). On by default, with keys shared by
+    /// every listener of the same security class and kept across reloads and binary upgrades.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tickets: Option<TlsTickets>,
+    /// Sessions kept in memory for resumption by session ID (TLS 1.2, and TLS 1.3 when
+    /// tickets are off), shared like the ticket keys. Default 256 sessions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_cache: Option<TlsSessionCache>,
+    /// TLS client fingerprints (H-SEC-03): JA4, and JA3 on request, computed from each
+    /// connection's ClientHello. Unset (the default), no ClientHello is read for it and
+    /// `ClientFingerprint`, the `ja4` keys and the access-log fields stay empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<TlsFingerprint>,
+}
+
+/// Which TLS client fingerprints an `https` listener computes, and whether backends see them.
+/// The values are computed from the outer ClientHello (with Encrypted Client Hello the inner
+/// one is never seen), only for connections this listener terminates.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct TlsFingerprint {
+    /// JA4 (FoxIO, BSD 3-Clause). Default on when `fingerprint` is set.
+    pub ja4: bool,
+    /// JA3 (Salesforce, an MD5 of the ClientHello). Off by default: legacy, since Chrome 110
+    /// randomises the extension order that JA3 hashes, one browser has many JA3 values.
+    pub ja3: bool,
+    /// A request header that carries the JA4 value to the backend, e.g. `X-JA4`. A copy sent
+    /// by the client is always removed. Unset (the default): backends do not see it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub header: Option<String>,
+    /// A request header that carries the JA3 value (needs `ja3: true`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ja3_header: Option<String>,
+}
+
+impl Default for TlsFingerprint {
+    fn default() -> Self {
+        Self {
+            ja4: true,
+            ja3: false,
+            header: None,
+            ja3_header: None,
+        }
+    }
+}
+
+impl ListenerTls {
+    /// The ticket settings, with the defaults when `tickets` is omitted.
+    #[must_use]
+    pub fn tickets(&self) -> TlsTickets {
+        self.tickets.clone().unwrap_or_default()
+    }
+
+    /// The session cache settings, with the defaults when `session_cache` is omitted.
+    #[must_use]
+    pub fn session_cache(&self) -> TlsSessionCache {
+        self.session_cache.unwrap_or_default()
+    }
+}
+
+/// TLS session tickets. A ticket lets a returning client skip the full handshake. Listeners
+/// share ticket keys only when their TLS policy, client authentication (mode and CA
+/// certificates), certificate scope and these settings are equal, so a session from a listener
+/// without client authentication can never be resumed on one that requires it. 0-RTT (early
+/// data) is never accepted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct TlsTickets {
+    /// Issue and accept tickets.
+    pub enabled: bool,
+    /// How often a new ticket key is made; the previous key still decrypts for one more
+    /// interval, so tickets live at most twice this (announced to clients, capped at 7 days by
+    /// RFC 8446 §4.6.1). Default 6h, rustls's own default; at most 84h.
+    pub rotate: Duration,
+    /// Keys you provide, to share tickets between instances: one or more 32-byte keys in base64,
+    /// one per line (`openssl rand -base64 32`), the first current, the others still accepted.
+    /// The file must not be readable by the group or others, is read again when it changes, and
+    /// rotating it is then your job (a warning when it is older than 24 hours). Without it, keys
+    /// are generated, live in memory only and are handed to the next process in a binary
+    /// upgrade.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_file: Option<PathBuf>,
+}
+
+impl Default for TlsTickets {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            rotate: Duration::from_secs(6 * 60 * 60),
+            key_file: None,
+        }
+    }
+}
+
+/// The in-memory session cache of a TLS listener.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct TlsSessionCache {
+    /// Sessions kept (0 turns the cache off). Default 256, rustls's default.
+    pub size: u32,
+}
+
+impl Default for TlsSessionCache {
+    fn default() -> Self {
+        Self { size: 256 }
+    }
 }
 
 /// Client certificate verification.

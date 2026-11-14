@@ -461,6 +461,7 @@ fn add_route(b: &mut Builder<'_>, ing: &Ing<'_>, new: NewRoute) {
             matcher: MatchSpec::Rule(new.expr.to_string()),
             listeners: None,
             priority: new.priority,
+            priority_class: rdock_model::route::PriorityClass::Normal,
             middlewares,
             service: Some(new.service),
             tls: Some(new.tls),
@@ -570,6 +571,7 @@ fn backend(
         Scheme::Http => "http",
         Scheme::Https => "https",
         Scheme::H2c => "h2c",
+        Scheme::H3 => "h3",
     };
     let name = object_name(
         "isvc",

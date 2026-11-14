@@ -19,8 +19,13 @@ Both need a middleware that sets the consumer **earlier in the route's list** (`
 [`oidc`](/docs/guides/oidc-login/), `cloudflare_access`, or `jwt` with
 [`consumer_claim`](/docs/guides/jwt/#consumers-from-tokens)); `rdock validate` refuses a route
 where none does. After an OIDC login the consumer is the user's verified `email` claim (or
-another `consumer_claim`), and its groups come from the token's `groups` claim, so group
-overrides work for logged-in users too. A consumer named by a token (`oidc`, `jwt`,
+another `consumer_claim`), and its groups come from the token's `groups` claim. Groups taken
+from a token **do not count** for `key: group` or for group `overrides`: an identity provider
+may let users choose them, and a token group `gold` must not spend the budget of your
+configured `gold` customers, nor create a counter per value. They are kept on the consumer
+(metering, headers). To count token groups, list them in the `jwt` middleware's
+`trusted_groups`, or use `map_to_consumers: true`, which gives the configured consumer's
+groups. A consumer named by a token (`oidc`, `jwt`,
 `cloudflare_access`) is counted apart from an API-key consumer of the same name and from a
 user of another issuer; with `map_to_consumers: true` on `oidc` or `jwt`, a name that
 `consumers` defines is that consumer, with its groups and its counters.
@@ -71,14 +76,32 @@ services:
 |---|---|---|
 | `limit` | required | Requests per window. |
 | `window` | required | `hour` (from :00), `day` (from 00:00 UTC) or `month` (from 00:00 UTC on the 1st). |
-| `overrides` | none | Group → limit. The **first of the consumer's groups**, in its `groups` order, that has an override wins. |
+| `overrides` | none | Group → limit. With `key: consumer`, the **first of the consumer's groups**, in its `groups` order, that has an override wins; with `key: group`, the primary group's. |
 | `headers` | `off` | `draft` adds `RateLimit-Policy` and `RateLimit` (below). |
 | `flush_interval` | `10s` | How often counters are written to disk. |
-| `key` | `consumer` | Only `consumer` is accepted. |
+| `key` | `consumer` | `consumer`, or `group` <Status planned="v0.9" />: one count per **primary group** (the first of the consumer's `groups`), shared by every consumer of that group. A consumer without a group is counted on its own. |
 
 `rate_limit` takes the same `overrides` (each with `average`, and optionally `burst` and
 `period`, defaulting to the middleware's) and the same `headers` setting, with `key: consumer`
-only.
+or `key: group`.
+
+### One quota for a whole customer
+
+<Status planned="v0.9" /> With `key: group`, every key and user of a customer draws on one
+count. Group counters show as `group:<name>` in `key` in `GET /api/v1/quota`; reset them with
+`DELETE /api/v1/quota/group:<name>`.
+
+```yaml title="rdock.yaml (excerpt)"
+consumers:
+  acme-ci: { groups: [acme] }
+  acme-app: { groups: [acme] }
+middlewares:
+  customer-month:
+    type: quota
+    key: group
+    limit: 1000000
+    window: month
+```
 
 ## What a refused request gets
 
@@ -108,8 +131,12 @@ off by default; `Retry-After` takes precedence, as the draft says. The older
 
 ## How exact the counts are
 
-- **Per instance.** Each ReverseDock process counts on its own: three replicas allow up to three
-  times the quota. Shared counters are planned for v0.9.
+- **Per instance by default.** Each ReverseDock process counts on its own: three replicas allow
+  up to three times the quota. With `scope: cluster` <Status planned="v0.9" /> the instances of a
+  cluster share it, within the bound `L + N × max(c, ⌈L / N⌉)` and with a fallback to each instance's share while
+  the store is away ([details](/docs/guides/rate-limiting/#share-a-limit-across-instances));
+  cluster-scoped quotas are not written to `<data dir>/quota/` and do not appear in
+  `rdock consumers quota`.
 - **Exact on one instance**, also under concurrent requests.
 - **Approximate across restarts.** Counters are written to `<data dir>/quota/` every
   `flush_interval` and at shutdown, and read back at start while their window lasts. A crash

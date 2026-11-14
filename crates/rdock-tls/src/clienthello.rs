@@ -34,8 +34,45 @@ const CLIENT_HELLO: u8 = 1;
 const MAX_RECORD: usize = 1 << 14;
 const EXT_SERVER_NAME: u16 = 0;
 const EXT_ALPN: u16 = 16;
+const EXT_SUPPORTED_GROUPS: u16 = 10;
+const EXT_EC_POINT_FORMATS: u16 = 11;
+const EXT_SIGNATURE_ALGORITHMS: u16 = 13;
+const EXT_SUPPORTED_VERSIONS: u16 = 43;
 const NAME_TYPE_HOST_NAME: u8 = 0;
 const MAX_SESSION_ID: usize = 32;
+/// Most extensions a ClientHello may carry. RFC 8446 §4.2 allows each type once; browsers send
+/// about 20 (GREASE included), so 128 bounds the duplicate check and the fingerprint lists.
+pub const MAX_EXTENSIONS: usize = 128;
+
+/// Everything a TLS client fingerprint (JA4, JA3) reads from a ClientHello, in wire order and
+/// with GREASE values kept: the fingerprint code removes them ([`crate::fingerprint`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HelloFacts {
+    /// `legacy_version` of the ClientHello (not the record version).
+    pub version: u16,
+    /// Cipher suites in the client's order.
+    pub cipher_suites: Vec<u16>,
+    /// Extension types in the client's order.
+    pub extensions: Vec<u16>,
+    /// `supported_versions` (0x002b) entries, empty without the extension.
+    pub supported_versions: Vec<u16>,
+    /// `signature_algorithms` (0x000d) entries in the client's order.
+    pub signature_algorithms: Vec<u16>,
+    /// `supported_groups` (0x000a) entries (JA3's "elliptic curves").
+    pub groups: Vec<u16>,
+    /// `ec_point_formats` (0x000b) entries.
+    pub point_formats: Vec<u8>,
+    /// The first ALPN protocol name, if the client sent ALPN.
+    pub first_alpn: Option<Vec<u8>>,
+}
+
+impl HelloFacts {
+    /// Whether the client sent a `server_name` extension (JA4's `d`), whatever its content.
+    #[must_use]
+    pub fn has_sni(&self) -> bool {
+        self.extensions.contains(&EXT_SERVER_NAME)
+    }
+}
 
 /// What a ClientHello asks for.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -109,11 +146,28 @@ pub fn parse(buf: &[u8]) -> Result<Parsed, HelloError> {
                 .get(HANDSHAKE_HEADER..total)
                 .ok_or(HelloError::Malformed("truncated handshake message"))?;
             Ok(Parsed::Hello {
-                hello: parse_client_hello(body)?,
+                hello: parse_client_hello(body, None)?,
                 len,
             })
         }
     }
+}
+
+/// The fingerprint facts of the complete ClientHello at the start of `buf` (the bytes [`peek`]
+/// returned), with the same checks and bounds as [`parse`]. `None` when `buf` holds no complete,
+/// acceptable ClientHello: the connection then simply has no fingerprint.
+#[must_use]
+pub fn facts(buf: &[u8]) -> Option<HelloFacts> {
+    if buf.is_empty() || !starts_like_tls(buf) {
+        return None;
+    }
+    let Ok(Reassembled::Complete { message, total, .. }) = reassemble(buf) else {
+        return None;
+    };
+    let body = message.get(HANDSHAKE_HEADER..total)?;
+    let mut facts = HelloFacts::default();
+    parse_client_hello(body, Some(&mut facts)).ok()?;
+    Some(facts)
 }
 
 /// True while the bytes present match `16 03 01` or `16 03 03`: a handshake record with the
@@ -208,10 +262,15 @@ fn message_len(message: &[u8]) -> Result<Option<usize>, HelloError> {
     Ok(Some(total))
 }
 
-/// RFC 8446 §4.1.2, skipping everything up to the extensions.
-fn parse_client_hello(body: &[u8]) -> Result<ClientHello, HelloError> {
+/// RFC 8446 §4.1.2. Without `facts`, everything up to the extensions is skipped; with it, the
+/// fields a fingerprint needs are recorded as well.
+fn parse_client_hello(
+    body: &[u8],
+    mut facts: Option<&mut HelloFacts>,
+) -> Result<ClientHello, HelloError> {
     let mut hello = Reader(body);
-    hello.take(2 + 32, "legacy_version and random")?;
+    let version = hello.u16("legacy_version")?;
+    hello.take(32, "random")?;
     if hello.vec_u8("legacy_session_id")?.len() > MAX_SESSION_ID {
         return Err(HelloError::Malformed(
             "legacy_session_id longer than 32 bytes",
@@ -224,40 +283,90 @@ fn parse_client_hello(body: &[u8]) -> Result<ClientHello, HelloError> {
     if hello.vec_u8("legacy_compression_methods")?.is_empty() {
         return Err(HelloError::Malformed("legacy_compression_methods"));
     }
+    if let Some(facts) = facts.as_deref_mut() {
+        facts.version = version;
+        facts.cipher_suites = u16_list(suites);
+    }
     if hello.is_empty() {
         // A ClientHello before TLS 1.3 may end here.
         return Ok(ClientHello::default());
     }
     let extensions = hello.vec_u16("extensions")?;
     hello.finish("bytes after the extensions")?;
-    parse_extensions(extensions)
+    parse_extensions(extensions, facts)
 }
 
-/// Walks the extensions. A second `server_name` or ALPN extension is refused (RFC 8446 §4.2):
-/// the router and the backend could otherwise read different ones.
-fn parse_extensions(extensions: &[u8]) -> Result<ClientHello, HelloError> {
+/// Walks the extensions. A second extension of any type is refused (RFC 8446 §4.2: "There MUST
+/// NOT be more than one extension of the same type"); for `server_name` and ALPN the router and
+/// the backend could otherwise read different ones. More than [`MAX_EXTENSIONS`] are refused.
+fn parse_extensions(
+    extensions: &[u8],
+    mut facts: Option<&mut HelloFacts>,
+) -> Result<ClientHello, HelloError> {
     let mut extensions = Reader(extensions);
     let mut sni = None;
-    let mut alpn = None;
+    let mut alpn: Option<Vec<Vec<u8>>> = None;
+    let mut seen = [0_u16; MAX_EXTENSIONS];
+    let mut count = 0;
     while !extensions.is_empty() {
         let kind = extensions.u16("extension type")?;
         let data = extensions.vec_u16("extension data")?;
+        let earlier = seen.get(..count).unwrap_or_default();
+        if earlier.contains(&kind) {
+            return Err(match kind {
+                EXT_SERVER_NAME => HelloError::Malformed("duplicate server_name extension"),
+                EXT_ALPN => HelloError::Malformed("duplicate ALPN extension"),
+                _ => HelloError::Malformed("duplicate extension"),
+            });
+        }
+        let Some(slot) = seen.get_mut(count) else {
+            return Err(HelloError::Malformed("too many extensions"));
+        };
+        *slot = kind;
+        count += 1;
         match kind {
-            EXT_SERVER_NAME if sni.is_some() => {
-                return Err(HelloError::Malformed("duplicate server_name extension"));
-            }
             EXT_SERVER_NAME => sni = Some(server_name(data)?),
-            EXT_ALPN if alpn.is_some() => {
-                return Err(HelloError::Malformed("duplicate ALPN extension"));
-            }
             EXT_ALPN => alpn = Some(protocols(data)?),
             _ => {}
         }
+        if let Some(facts) = facts.as_deref_mut() {
+            facts.extensions.push(kind);
+            match kind {
+                EXT_SUPPORTED_VERSIONS => {
+                    facts.supported_versions = u16_list(Reader(data).vec_u8("supported_versions")?);
+                }
+                EXT_SIGNATURE_ALGORITHMS => {
+                    facts.signature_algorithms =
+                        u16_list(Reader(data).vec_u16("signature_algorithms")?);
+                }
+                EXT_SUPPORTED_GROUPS => {
+                    facts.groups = u16_list(Reader(data).vec_u16("supported_groups")?);
+                }
+                EXT_EC_POINT_FORMATS => {
+                    facts.point_formats = Reader(data).vec_u8("ec_point_formats")?.to_vec();
+                }
+                _ => {}
+            }
+        }
+    }
+    if let Some(facts) = facts {
+        facts.first_alpn = alpn.as_ref().and_then(|a| a.first().cloned());
     }
     Ok(ClientHello {
         sni: sni.flatten(),
         alpn: alpn.unwrap_or_default(),
     })
+}
+
+/// Big-endian `u16` values; a trailing odd byte is ignored (the fingerprint lists are
+/// informational, and the lists that must be even are checked where they are required).
+fn u16_list(bytes: &[u8]) -> Vec<u16> {
+    bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u16::from_be_bytes(*pair))
+        .collect()
 }
 
 /// RFC 6066 §3 `ServerNameList`; the one valid `host_name`, if there is one.

@@ -17,7 +17,8 @@
 //! [`plugin_api`] (the `rdock-plugin-api` crate) only.
 //!
 //! With the default feature `mimalloc` the library also sets mimalloc as the global allocator,
-//! as the stock binary does; turn the feature off to choose your own.
+//! as the stock binary does; turn the feature off to choose your own. The `jemalloc` feature
+//! (off by default) sets jemalloc instead, for comparisons (H-PERF-06).
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -31,21 +32,38 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 /// musl's malloc took a global lock on every allocation and mapped and unmapped memory for
 /// the 64 KiB connection buffers, which was about a quarter of the CPU per request on 2 CPUs
 /// (perf, 2026-11-02, #93). mimalloc keeps freed memory per thread and reuses it.
-#[cfg(feature = "mimalloc")]
+#[cfg(all(
+    feature = "mimalloc",
+    not(feature = "jemalloc"),
+    not(feature = "alloc-count")
+))]
 #[global_allocator]
 static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+/// The comparison allocator of H-PERF-06, behind the `jemalloc` feature (off by default and in
+/// release builds). It wins over mimalloc when both features are on.
+#[cfg(all(feature = "jemalloc", not(feature = "alloc-count")))]
+#[global_allocator]
+static ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+#[cfg(feature = "alloc-count")]
+mod alloc_count;
 
 pub use rdock_plugin_api as plugin_api;
 pub use rdock_plugin_api::Registry;
 
 mod admin_cli;
+mod cluster;
+mod control;
 mod ctl;
+mod datadir;
 mod engine;
 mod hash;
 mod migrate;
 mod providers;
 mod run;
 mod trust;
+mod upgrade;
 mod validate;
 mod watch;
 mod zero_config;
@@ -74,12 +92,19 @@ enum Command {
     Run(RunArgs),
     /// Validate configuration files without starting the proxy.
     Validate(ValidateArgs),
+    /// Run a cluster's control plane, and publish, list and roll back configurations, enrol and
+    /// revoke data planes through it.
+    #[command(subcommand)]
+    Control(control::ControlCommand),
     /// Ask the running proxy to reload its configuration.
     Reload(CtlArgs),
     /// Show the state of the running proxy.
     Status(StatusArgs),
     /// Exit 0 when the running proxy is ready (for container health checks).
     Healthcheck(CtlArgs),
+    /// Replace the running binary without dropping connections (Linux; over the admin Unix
+    /// socket only). The running process hands its listeners to the new binary and drains.
+    Upgrade(UpgradeArgs),
     /// Create an argon2id password hash for `basic_auth` (reads the password from stdin).
     Hash(HashArgs),
     /// Install the local CA's root (for localhost and private names) into the system trust
@@ -109,6 +134,9 @@ enum Command {
     /// Manage consumers (API clients) and their quota counters.
     #[command(subcommand)]
     Consumers(admin_cli::ConsumersCommand),
+    /// List and lift the bans of `abuse` middlewares on this instance.
+    #[command(subcommand)]
+    Bans(admin_cli::BansCommand),
     /// Mint, revoke and hash consumers' API keys.
     #[command(subcommand)]
     Keys(admin_cli::KeysCommand),
@@ -199,6 +227,10 @@ struct RunArgs {
     /// Format of the application log.
     #[arg(long, env = "RDOCK_LOG_FORMAT", value_enum, default_value_t = LogFormatArg::Auto)]
     log_format: LogFormatArg,
+    /// Internal (binary upgrade): take over the listening sockets a running rdock hands over on
+    /// standard input. Started by `rdock upgrade`; not for use by hand.
+    #[arg(long, hide = true)]
+    inherit: bool,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -241,6 +273,22 @@ struct CtlArgs {
     /// Data directory, to find the admin socket.
     #[arg(long, env = "RDOCK_DATA_DIR", default_value = DEFAULT_DATA_DIR)]
     data_dir: PathBuf,
+}
+
+#[derive(Args)]
+struct UpgradeArgs {
+    /// The new binary [default: `upgrade.binary`, /usr/local/bin/rdock].
+    #[arg(long)]
+    binary: Option<PathBuf>,
+    /// Install a binary whose version is older than the running one (refused otherwise).
+    #[arg(long)]
+    allow_downgrade: bool,
+    /// Data directory, to find the admin socket.
+    #[arg(long, env = "RDOCK_DATA_DIR", default_value = DEFAULT_DATA_DIR)]
+    data_dir: PathBuf,
+    /// Configuration file, to find `admin.socket` when it is set.
+    #[arg(short, long, env = "RDOCK_CONFIG", default_value = DEFAULT_CONFIG)]
+    config: PathBuf,
 }
 
 #[derive(Args)]
@@ -291,12 +339,18 @@ fn run_parsed(registry: Registry, parse: impl FnOnce() -> Result<Cli, clap::Erro
         }
     };
     let plugins = std::sync::Arc::new(registry);
+    #[cfg(feature = "alloc-count")]
+    if matches!(cli.command, Command::Run(_)) {
+        alloc_count::serve_from_env();
+    }
     let result = match cli.command {
         Command::Run(args) => run::run(&args, &plugins),
         Command::Validate(args) => validate::validate(&args, &plugins),
+        Command::Control(command) => control::control(&command, &plugins),
         Command::Reload(args) => ctl::reload(&args),
         Command::Status(args) => ctl::status(&args),
         Command::Healthcheck(args) => Ok(ctl::healthcheck(&args)),
+        Command::Upgrade(args) => ctl::upgrade(&args),
         Command::Hash(args) => hash::hash(&args),
         Command::Trust(args) => trust::trust(&args),
         Command::Migrate(MigrateCommand::Traefik(args)) => migrate::traefik(&args),
@@ -308,6 +362,7 @@ fn run_parsed(registry: Registry, parse: impl FnOnce() -> Result<Cli, clap::Erro
         Command::Backends(command) => admin_cli::backends(&command),
         Command::Cache(command) => admin_cli::cache(&command),
         Command::Consumers(command) => admin_cli::consumers(&command),
+        Command::Bans(command) => admin_cli::bans(&command),
         Command::Keys(command) => admin_cli::keys(&command),
         Command::Routes(command) => admin_cli::routes(&command),
         Command::Schema { openapi: false } => schema().map(|()| ExitCode::SUCCESS),
@@ -356,7 +411,9 @@ fn version(json: bool, plugins: &Registry) -> anyhow::Result<()> {
     // The WASM host ABI, when this build includes it (`wasm` feature, experimental).
     let wasm_abi = rdock_middleware::wasm::ENABLED.then_some(rdock_wasm::ABI_VERSION);
     if json {
-        let info = serde_json::json!({ "version": VERSION, "commit": COMMIT, "rustc": RUSTC, "target": TARGET, "plugin_api": api, "plugins": names, "wasm_abi": wasm_abi });
+        // HTTP/3 ingress, when this build includes it (`http3` feature, experimental).
+        let http3 = rdock_proxy::http3::ENABLED;
+        let info = serde_json::json!({ "version": VERSION, "commit": COMMIT, "rustc": RUSTC, "target": TARGET, "plugin_api": api, "plugins": names, "wasm_abi": wasm_abi, "http3": http3 });
         print(&format!("{info}\n"))
     } else {
         let plugins = if names.is_empty() {
@@ -368,8 +425,13 @@ fn version(json: bool, plugins: &Registry) -> anyhow::Result<()> {
             || "not in this build".to_owned(),
             |abi| format!("ABI {abi} (experimental)"),
         );
+        let http3 = if rdock_proxy::http3::ENABLED {
+            "quinn and h3 (experimental)"
+        } else {
+            "not in this build"
+        };
         print(&format!(
-            "rdock {VERSION}\ncommit  {COMMIT}\nrustc   {RUSTC}\ntarget  {TARGET}\nplugin API {api}; plugins: {plugins}\nWASM plugins: {wasm}\n"
+            "rdock {VERSION}\ncommit  {COMMIT}\nrustc   {RUSTC}\ntarget  {TARGET}\nplugin API {api}; plugins: {plugins}\nWASM plugins: {wasm}\nHTTP/3: {http3}\n"
         ))
     }
 }

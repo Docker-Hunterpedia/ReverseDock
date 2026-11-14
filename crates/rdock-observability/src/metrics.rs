@@ -32,9 +32,39 @@ pub struct Metrics {
     pub connections_total: IntCounterVec,
     /// TLS handshakes that failed, by listener.
     pub tls_handshake_errors: IntCounterVec,
+    /// TLS connections between accept and the end of their handshake, by listener.
+    pub tls_handshakes_in_flight: IntGaugeVec,
+    /// Times a listener stopped accepting because `tls.max_handshakes` was reached (new
+    /// connections waited in the listen backlog meanwhile), by listener.
+    pub tls_handshake_waits: IntCounterVec,
+    /// The proxy runtime's thread settings in effect (`kind`: `worker`, `max_blocking`).
+    pub runtime_threads: IntGaugeVec,
+    /// Binary upgrades this process started, by `result` (`ok`, `failed`, `refused`).
+    pub upgrades: IntCounterVec,
+    /// Connections the previous process still serves while it drains after a binary upgrade.
+    pub upgrade_draining_connections: IntGauge,
+    /// Binary upgrades behind this process (0 for a process started normally).
+    pub upgrade_generation: IntGauge,
+    /// When the previous process's drain ends (Unix seconds); 0 when none drains.
+    pub upgrade_drain_deadline: IntGauge,
     /// Connections closed by the PROXY protocol step, by listener and reason (`untrusted`,
     /// `missing`, `malformed`, `timeout`, `too_large`).
     pub proxy_protocol_rejected: IntCounterVec,
+    /// HTTP/3 (experimental, ADR-0032): QUIC connections that completed their handshake, by
+    /// listener.
+    pub http3_connections_total: IntCounterVec,
+    /// HTTP/3: open QUIC connections by listener.
+    pub http3_connections: IntGaugeVec,
+    /// HTTP/3: QUIC Retry packets sent, by listener.
+    pub http3_retries: IntCounterVec,
+    /// HTTP/3: QUIC connections that ended or were refused, by listener and reason (`idle`,
+    /// `client`, `drained`, `limit`, `client_limit`, `handshake`, `protocol`, `reset_flood`).
+    pub http3_connections_closed: IntCounterVec,
+    /// HTTP/3: request streams reset (or answered 431) before the pipeline because their
+    /// header section was malformed, by listener and reason.
+    pub http3_malformed_requests: IntCounterVec,
+    /// HTTP/3: requests answered, by listener and status class.
+    pub http3_requests: IntCounterVec,
     /// Open TCP-route connections by listener and route.
     pub tcp_connections: IntGaugeVec,
     /// Bytes relayed by TCP routes, by route and direction (`in` from the client, `out` to it).
@@ -66,10 +96,35 @@ pub struct Metrics {
     pub cert_renewal_failures: IntCounterVec,
     /// ACME orders by CA host and result (`issued`, `failed`).
     pub acme_orders: IntCounterVec,
+    /// The control-plane bundle revision this data plane serves (0 without a control plane).
+    pub cluster_bundle_revision: IntGauge,
+    /// Bundles received from the control plane, by result (`ack`, `nack`, `refused`).
+    pub cluster_bundles: IntCounterVec,
+    /// Whether the data plane's last request to its control plane succeeded (1) or not (0).
+    pub cluster_control_connected: IntGauge,
+    /// Certificate leases asked for, by result (`acquired`, `busy`, `lost`, `error`).
+    pub cluster_leases: IntCounterVec,
+    /// Challenge barriers, by result (`complete`: every live member confirmed; `timeout`).
+    pub cluster_barriers: IntCounterVec,
+    /// Whether the store of cluster-scoped limits answers (1) or limits fall back to each
+    /// instance's share (0).
+    pub cluster_limits_store_up: IntGauge,
+    /// Claims of cluster-scoped limits, by outcome (`granted`, `exhausted`, `forced`,
+    /// `failed`).
+    pub cluster_limit_claims: IntCounterVec,
+    /// Instances sharing cluster-scoped limits, as this instance last counted them.
+    pub cluster_limits_members: IntGauge,
+    /// The control plane's latest published revision (control plane only).
+    pub control_revision: IntGauge,
+    /// Enrolled data planes by state (`synced`, `stale`, `error`, `away`, `revoked`; control
+    /// plane only).
+    pub control_instances: IntGaugeVec,
     /// Whether each backend takes traffic (1) or not (0), by service and address.
     pub backend_up: IntGaugeVec,
     /// Backend ejections by passive health, by service and address.
     pub backend_ejections: IntCounterVec,
+    /// Backend ejections by an outlier detector, by service, address and detector.
+    pub outlier_ejections: IntCounterVec,
     /// Retries by service and reason (`connect`, `reset`, `timeout`, `502` …).
     pub retries: IntCounterVec,
     /// Retries not made because the service's retry budget was used up.
@@ -136,6 +191,33 @@ pub struct Metrics {
     /// Failed requests to OIDC providers by middleware and operation (`discovery`, `jwks`,
     /// `token`, `refresh`).
     pub oidc_provider_errors: IntCounterVec,
+    /// `rdock_geoip_build_timestamp_seconds{database}`: build time of each GeoIP database
+    /// (`country`, `asn`) from its metadata.
+    pub geoip_build: IntGaugeVec,
+    /// `rdock_geoip_database_age_seconds{database}`: age of each GeoIP database, computed when
+    /// the metrics are read.
+    pub geoip_age: IntGaugeVec,
+    geoip_epochs: std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<String, u64>>>,
+    /// `rdock_abuse_actions_total{middleware,action}`: requests an `abuse` middleware denied
+    /// (`deny`), held (`tarpit`) or tagged (`tag`) because their key is banned, and bans
+    /// started (`ban`).
+    pub abuse_actions: IntCounterVec,
+    /// `rdock_abuse_bans`: keys banned right now, all `abuse` middlewares together.
+    pub abuse_bans: IntGauge,
+    /// `rdock_abuse_bans_refused_total{middleware}`: bans not started because the ban list
+    /// was full.
+    pub abuse_bans_refused: IntCounterVec,
+    /// `rdock_admission_limit{middleware}`: the current adaptive limit of each `admission`
+    /// middleware (`min` while `gradient` measures the no-load latency).
+    pub admission_limit: IntGaugeVec,
+    /// `rdock_admission_in_flight{middleware}`: requests admitted and not finished.
+    pub admission_in_flight: IntGaugeVec,
+    /// `rdock_admission_shed_total{middleware,class}`: requests answered `503` by an
+    /// `admission` middleware, by the route's `priority_class`.
+    pub admission_shed: IntCounterVec,
+    /// `rdock_backend_addresses_refused_total{service}`: resolved backend addresses of a
+    /// tenant's service that its tenant may not reach (ADR-0031), never connected to.
+    pub backend_addresses_refused: IntCounterVec,
 }
 
 /// Distinct consumers that get their own `rdock_consumer_requests_total` series; later ones
@@ -221,11 +303,92 @@ impl Metrics {
             "Failed TLS handshakes.",
             &["listener"],
         )?;
+        let tls_handshakes_in_flight = gauges(
+            &registry,
+            "rdock_tls_handshakes_in_flight",
+            "TLS connections accepted whose handshake has not finished.",
+            &["listener"],
+        )?;
+        let tls_handshake_waits = counters(
+            &registry,
+            "rdock_tls_handshake_waits_total",
+            "Times the listener stopped accepting because tls.max_handshakes was reached; new connections waited in the listen backlog.",
+            &["listener"],
+        )?;
+        let runtime_threads = gauges(
+            &registry,
+            "rdock_runtime_threads",
+            "Thread settings of the proxy runtime (worker threads, most blocking threads).",
+            &["kind"],
+        )?;
+        let upgrades = counters(
+            &registry,
+            "rdock_upgrades_total",
+            "Binary upgrades started by this process, by result (ok, failed, refused).",
+            &["result"],
+        )?;
+        let upgrade_draining_connections = registered(
+            &registry,
+            IntGauge::new(
+                "rdock_upgrade_draining_connections",
+                "Connections the previous process still serves while it drains after a binary upgrade.",
+            ),
+        )?;
+        let upgrade_generation = registered(
+            &registry,
+            IntGauge::new(
+                "rdock_upgrade_generation",
+                "Binary upgrades behind this process (0 for a process started normally).",
+            ),
+        )?;
+        let upgrade_drain_deadline = registered(
+            &registry,
+            IntGauge::new(
+                "rdock_upgrade_drain_deadline_seconds",
+                "When the previous process's drain ends, in Unix seconds; 0 when none drains.",
+            ),
+        )?;
         let proxy_protocol_rejected = counters(
             &registry,
             "rdock_proxy_protocol_rejected_total",
             "Connections closed for their PROXY protocol header, or its absence.",
             &["listener", "reason"],
+        )?;
+        let http3_connections_total = counters(
+            &registry,
+            "rdock_http3_connections_total",
+            "QUIC connections of HTTP/3 listeners that completed their handshake.",
+            &["listener"],
+        )?;
+        let http3_connections = gauges(
+            &registry,
+            "rdock_http3_connections",
+            "Open QUIC connections of HTTP/3 listeners.",
+            &["listener"],
+        )?;
+        let http3_retries = counters(
+            &registry,
+            "rdock_http3_retries_total",
+            "QUIC Retry packets sent by HTTP/3 listeners.",
+            &["listener"],
+        )?;
+        let http3_connections_closed = counters(
+            &registry,
+            "rdock_http3_connections_closed_total",
+            "QUIC connections of HTTP/3 listeners that ended or were refused, by reason.",
+            &["listener", "reason"],
+        )?;
+        let http3_malformed_requests = counters(
+            &registry,
+            "rdock_http3_malformed_requests_total",
+            "HTTP/3 requests reset before the pipeline because their header section was malformed.",
+            &["listener", "reason"],
+        )?;
+        let http3_requests = counters(
+            &registry,
+            "rdock_http3_requests_total",
+            "HTTP/3 requests answered, by status class.",
+            &["listener", "status_class"],
         )?;
         let tcp_connections = gauges(
             &registry,
@@ -306,6 +469,71 @@ impl Metrics {
             "ACME certificate orders.",
             &["ca", "result"],
         )?;
+        let cluster_bundle_revision = registered(
+            &registry,
+            IntGauge::new(
+                "rdock_cluster_bundle_revision",
+                "The control-plane bundle revision this data plane serves; 0 without a control plane.",
+            ),
+        )?;
+        let cluster_bundles = counters(
+            &registry,
+            "rdock_cluster_bundles_total",
+            "Bundles received from the control plane, by result (ack, nack, refused).",
+            &["result"],
+        )?;
+        let cluster_control_connected = registered(
+            &registry,
+            IntGauge::new(
+                "rdock_cluster_control_connected",
+                "Whether the data plane's last request to its control plane succeeded (1) or not (0).",
+            ),
+        )?;
+        let cluster_leases = counters(
+            &registry,
+            "rdock_cluster_leases_total",
+            "Certificate leases asked for, by result (acquired, busy, lost, error).",
+            &["result"],
+        )?;
+        let cluster_limits_store_up = registered(
+            &registry,
+            IntGauge::new(
+                "rdock_cluster_limits_store_up",
+                "Whether the store of cluster-scoped limits answers (1) or limits fall back to each instance's share (0).",
+            ),
+        )?;
+        let cluster_limit_claims = counters(
+            &registry,
+            "rdock_cluster_limit_claims_total",
+            "Claims of cluster-scoped limits, by outcome (granted, exhausted, forced, failed).",
+            &["outcome"],
+        )?;
+        let cluster_limits_members = registered(
+            &registry,
+            IntGauge::new(
+                "rdock_cluster_limits_members",
+                "Instances sharing cluster-scoped limits, as this instance last counted them.",
+            ),
+        )?;
+        let cluster_barriers = counters(
+            &registry,
+            "rdock_cluster_challenge_barriers_total",
+            "Challenge barriers, by result (complete, timeout).",
+            &["result"],
+        )?;
+        let control_revision = registered(
+            &registry,
+            IntGauge::new(
+                "rdock_control_revision",
+                "The control plane's latest published revision.",
+            ),
+        )?;
+        let control_instances = gauges(
+            &registry,
+            "rdock_control_instances",
+            "Enrolled data planes by state (synced, stale, error, away, revoked).",
+            &["state"],
+        )?;
         let backend_up = gauges(
             &registry,
             "rdock_backend_up",
@@ -315,8 +543,14 @@ impl Metrics {
         let backend_ejections = counters(
             &registry,
             "rdock_backend_ejections_total",
-            "Backends ejected after repeated failures.",
+            "Backends ejected by passive health: repeated failures or an outlier detector.",
             &["service", "backend"],
+        )?;
+        let outlier_ejections = counters(
+            &registry,
+            "rdock_backend_outlier_ejections_total",
+            "Backends ejected by an outlier detector (success_rate or failure_percentage); also counted in rdock_backend_ejections_total.",
+            &["service", "backend", "detector"],
         )?;
         let retries = counters(
             &registry,
@@ -496,6 +730,61 @@ impl Metrics {
             "OIDC logins completed or refused, by middleware and result.",
             &["middleware", "result"],
         )?;
+        let geoip_build = gauges(
+            &registry,
+            "rdock_geoip_build_timestamp_seconds",
+            "Build time of each GeoIP database, from its metadata.",
+            &["database"],
+        )?;
+        let geoip_age = gauges(
+            &registry,
+            "rdock_geoip_database_age_seconds",
+            "Age of each GeoIP database (now minus its build time).",
+            &["database"],
+        )?;
+        let abuse_actions = counters(
+            &registry,
+            "rdock_abuse_actions_total",
+            "Requests of banned keys denied, held or tagged, and bans started, by abuse middleware.",
+            &["middleware", "action"],
+        )?;
+        let abuse_bans = registered(
+            &registry,
+            IntGauge::new(
+                "rdock_abuse_bans",
+                "Keys banned by abuse middlewares right now.",
+            ),
+        )?;
+        let abuse_bans_refused = counters(
+            &registry,
+            "rdock_abuse_bans_refused_total",
+            "Bans not started because the ban list was full.",
+            &["middleware"],
+        )?;
+        let admission_limit = gauges(
+            &registry,
+            "rdock_admission_limit",
+            "Current adaptive concurrency limit of each admission middleware.",
+            &["middleware"],
+        )?;
+        let admission_in_flight = gauges(
+            &registry,
+            "rdock_admission_in_flight",
+            "Requests in flight under each admission middleware.",
+            &["middleware"],
+        )?;
+        let admission_shed = counters(
+            &registry,
+            "rdock_admission_shed_total",
+            "Requests shed with 503 by admission middlewares, by priority class.",
+            &["middleware", "class"],
+        )?;
+        let backend_addresses_refused = counters(
+            &registry,
+            "rdock_backend_addresses_refused_total",
+            "Resolved backend addresses of tenant services that the tenant may not reach; never connected to.",
+            &["service"],
+        )?;
         let oidc_refreshes = counters(
             &registry,
             "rdock_oidc_refreshes_total",
@@ -509,9 +798,19 @@ impl Metrics {
             &["middleware", "operation"],
         )?;
         Ok(Self {
+            admission_limit,
+            admission_in_flight,
+            admission_shed,
+            backend_addresses_refused,
             quota_overflows,
             oidc_logins,
             oidc_refreshes,
+            geoip_build,
+            geoip_age,
+            geoip_epochs: std::sync::Arc::default(),
+            abuse_actions,
+            abuse_bans,
+            abuse_bans_refused,
             oidc_provider_errors,
             validation_requests,
             transform_skipped,
@@ -535,7 +834,20 @@ impl Metrics {
             connections,
             connections_total,
             tls_handshake_errors,
+            tls_handshakes_in_flight,
+            tls_handshake_waits,
+            runtime_threads,
+            upgrades,
+            upgrade_draining_connections,
+            upgrade_generation,
+            upgrade_drain_deadline,
             proxy_protocol_rejected,
+            http3_connections_total,
+            http3_connections,
+            http3_retries,
+            http3_connections_closed,
+            http3_malformed_requests,
+            http3_requests,
             tcp_connections,
             tcp_bytes,
             tcp_rejected,
@@ -549,8 +861,19 @@ impl Metrics {
             cert_expiry,
             cert_renewal_failures,
             acme_orders,
+            cluster_bundle_revision,
+            cluster_bundles,
+            cluster_control_connected,
+            cluster_leases,
+            cluster_barriers,
+            cluster_limits_store_up,
+            cluster_limit_claims,
+            cluster_limits_members,
+            control_revision,
+            control_instances,
             backend_up,
             backend_ejections,
+            outlier_ejections,
             retries,
             retry_budget_exhausted,
             backend_requests,
@@ -608,9 +931,30 @@ impl Metrics {
             .inc();
     }
 
+    /// Records the build time of the GeoIP database in `role` (`country`, `asn`).
+    pub fn set_geoip_build(&self, role: &str, epoch: u64) {
+        self.geoip_build
+            .with_label_values(&[role])
+            .set(i64::try_from(epoch).unwrap_or(i64::MAX));
+        if let Ok(mut epochs) = self.geoip_epochs.lock() {
+            epochs.insert(role.to_owned(), epoch);
+        }
+    }
+
     /// The Prometheus text exposition of every metric.
     #[must_use]
     pub fn render(&self) -> String {
+        if let Ok(epochs) = self.geoip_epochs.lock() {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            for (role, epoch) in epochs.iter() {
+                self.geoip_age
+                    .with_label_values(&[role])
+                    .set(i64::try_from(now.saturating_sub(*epoch)).unwrap_or(i64::MAX));
+            }
+        }
         let mut out = Vec::new();
         // Encoding gathered metric families into a Vec cannot fail.
         let _ = TextEncoder::new().encode(&self.registry.gather(), &mut out);

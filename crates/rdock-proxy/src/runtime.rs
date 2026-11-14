@@ -53,6 +53,14 @@ pub struct Runtime {
     pub errors: rdock_model::config::ErrorFormat,
     /// Usage metering (`observability.metering`), when configured.
     pub metering: Option<Arc<rdock_observability::metering::Meter>>,
+    /// GeoIP databases (`geoip`), when configured.
+    pub geoip: Option<Arc<crate::geoip::GeoIp>>,
+    /// Which GeoIP fields the access log carries (`geoip.log`).
+    pub geoip_log: rdock_model::settings::GeoIpLog,
+    /// Every fingerprint header any listener sets (`tls.fingerprint.header`, `ja3_header`),
+    /// lower-case: removed from every client request on every listener, so a backend that
+    /// trusts one never sees a client's copy.
+    pub fingerprint_headers: Arc<[String]>,
 }
 
 impl Runtime {
@@ -79,6 +87,9 @@ impl Runtime {
             tracer: None,
             errors: rdock_model::config::ErrorFormat::Html,
             metering: None,
+            geoip: None,
+            geoip_log: rdock_model::settings::GeoIpLog::default(),
+            fingerprint_headers: Arc::from([]),
         }
     }
 }
@@ -98,10 +109,23 @@ pub struct ListenerRuntime {
     pub tls: Option<ListenerTls>,
     /// Client-side timeouts.
     pub timeouts: ListenerTimeouts,
+    /// Options of the listening socket and of accepted connections.
+    pub socket: rdock_model::config::ListenerSocket,
+    /// `https` listeners: TLS handshakes in progress at once; `None` is no bound.
+    pub max_handshakes: Option<u32>,
+    /// HTTP/2 settings (`http` and `https` listeners).
+    pub http2: rdock_model::config::ListenerHttp2,
+    /// `https` listeners: the TLS client fingerprints to compute (`tls.fingerprint`).
+    pub fingerprint: Option<rdock_model::config::TlsFingerprint>,
+    /// HTTP/3 settings of an `https` listener with `http3.enabled` (ADR-0032); `None` serves
+    /// no HTTP/3.
+    pub http3: Option<rdock_model::config::ListenerHttp3>,
     /// Inbound PROXY protocol.
     pub proxy_protocol: Option<ProxyProtocolIn>,
     /// Routes in evaluation order.
     pub routes: Vec<Arc<RouteRuntime>>,
+    /// `routes` by host, built once the order is final; requests look routes up here.
+    pub route_index: crate::router::RouteIndex,
     /// TCP routes in evaluation order. A connection keeps these, not the whole runtime, for
     /// as long as it is relayed.
     pub tcp_routes: Arc<[Arc<crate::tcp::TcpRouteRuntime>]>,
@@ -123,6 +147,30 @@ pub struct ListenerTls {
     pub policy: TlsPolicy,
     /// Client certificate verification.
     pub client_auth: Option<rdock_tls::ClientAuth>,
+    /// Session resumption: tickets and the session cache.
+    pub resumption: rdock_tls::ResumptionSettings,
+    /// The listener's name when it serves certificates of its own (`tls.certificates`): its
+    /// server identities differ from the shared ones, so it is a resumption class of its own.
+    pub scope: Option<String>,
+    /// Keys read from `tls.tickets.key_file`; a change rebuilds the acceptor, which replaces
+    /// the keys of the class in place.
+    pub file_keys: Option<Vec<rdock_tls::tickets::TicketKey>>,
+}
+
+impl ListenerTls {
+    /// The resumption class of this listener (`rdock_tls::tickets`).
+    #[must_use]
+    pub fn class(&self) -> rdock_tls::ClassKey {
+        rdock_tls::ClassKey {
+            policy: format!("{:?}", self.policy).to_ascii_lowercase(),
+            client_auth: self
+                .client_auth
+                .as_ref()
+                .map(|auth| (auth.required, auth.identity())),
+            scope: self.scope.clone(),
+            settings: self.resumption.clone(),
+        }
+    }
 }
 
 /// The automatic HTTP to HTTPS redirect of a plain listener.
@@ -141,6 +189,8 @@ pub struct RouteRuntime {
     pub name: Arc<str>,
     /// Effective priority (explicit, or the rule length).
     pub priority: i64,
+    /// The route's class for `admission` load shedding.
+    pub priority_class: rdock_model::route::PriorityClass,
     /// Compiled rule.
     pub rule: Rule,
     /// The rule in canonical form, to find routes that can never match.
@@ -218,6 +268,70 @@ pub struct ServiceRuntime {
     pub tls: UpstreamTls,
     /// Forward the client's `Host`.
     pub pass_host_header: bool,
+    /// Tiers, locality and Peak-EWMA settings (ADR-0031).
+    pub selection: Selection,
+    /// For a tenant's service: the addresses it may reach. Every resolved address outside it
+    /// is left out of the members, so it is never connected to (requests, retries, mirrors and
+    /// health checks all pick from the members). `None`: any address.
+    pub allowed: Option<AddressGuard>,
+}
+
+/// The address policy of a tenant's service, compiled into it (the data plane does not know
+/// tenants, only this).
+#[derive(Debug, Clone)]
+pub struct AddressGuard {
+    /// What may be reached.
+    pub policy: Arc<rdock_model::addresses::BackendPolicy>,
+    /// `rdock_backend_addresses_refused_total{service}`, when metrics are on.
+    pub refused: Option<rdock_observability::IntCounter>,
+}
+
+impl AddressGuard {
+    /// Whether the service may connect to `addr`; a refusal is logged and counted.
+    fn admits(&self, service: &str, host: &str, addr: SocketAddr) -> bool {
+        match self.policy.refusal(addr.ip()) {
+            None => true,
+            Some(reason) => {
+                tracing::warn!(service, host, %addr, %reason, "backend address refused: the tenant may not reach it");
+                if let Some(counter) = &self.refused {
+                    counter.inc();
+                }
+                false
+            }
+        }
+    }
+}
+
+/// How a backend is chosen beyond the balancing policy: priority tiers, the preferred zone and
+/// what `peak_ewma` measures.
+#[derive(Debug, Clone, Default)]
+pub struct Selection {
+    /// Movement of traffic between priority tiers.
+    pub failover: Failover,
+    /// The zone whose backends are preferred (`locality: prefer` with a known zone); `None`
+    /// ignores zones.
+    pub zone: Option<Arc<str>>,
+    /// Latency sampling of `peak_ewma`; `None` for other policies.
+    pub peak: Option<PeakRuntime>,
+}
+
+/// Movement of traffic between priority tiers.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub enum Failover {
+    /// The first tier with an available backend gets everything.
+    #[default]
+    Strict,
+    /// Tiers share traffic by health × this overprovisioning factor (Envoy).
+    Spill(f64),
+}
+
+/// Latency sampling of `peak_ewma`.
+#[derive(Debug, Clone, Copy)]
+pub struct PeakRuntime {
+    /// Time constant of the average.
+    pub decay: std::time::Duration,
+    /// What a sample measures.
+    pub measure: rdock_model::service::LatencyMeasure,
 }
 
 /// TLS settings towards backends.
@@ -278,8 +392,10 @@ pub struct BackendRuntime {
     pub endpoint: Endpoint,
     /// Relative weight.
     pub weight: u32,
-    /// Used only when no primary backend is available.
-    pub backup: bool,
+    /// Priority tier, 0 first (a `backup` is tier 1).
+    pub priority: u8,
+    /// Zones the backend is local to: its `for_zones` hints, else its `zone`.
+    pub zones: Arc<[Arc<str>]>,
 }
 
 /// Health settings, compiled.
@@ -291,8 +407,8 @@ pub struct HealthRuntime {
     pub passive: Option<PassiveCheck>,
     /// Send to every backend when none is available.
     pub fail_open: bool,
-    /// Weight ramp after recovery.
-    pub slow_start: Option<std::time::Duration>,
+    /// Weight ramp after recovery or joining.
+    pub slow_start: Option<rdock_balancer::SlowStart>,
 }
 
 /// Periodic probes of every backend.
@@ -333,6 +449,8 @@ pub struct PassiveCheck {
     pub statuses: Vec<u16>,
     /// Largest ejected share, in percent.
     pub max_percent: u32,
+    /// Statistical outlier detectors and how often they run.
+    pub outlier: Option<(rdock_balancer::Outlier, std::time::Duration)>,
 }
 
 /// The request value that hash policies hash.
@@ -368,8 +486,12 @@ pub struct Member {
     pub id: String,
     /// Relative weight.
     pub weight: u32,
-    /// Used only when no primary backend is available.
+    /// Not in priority tier 0.
     pub backup: bool,
+    /// Priority tier, 0 first.
+    pub priority: u8,
+    /// In the service's preferred zone.
+    pub local: bool,
     /// State shared across generations.
     pub state: Arc<BackendState>,
     /// The sticky cookie value naming this backend, when the service is sticky.
@@ -385,6 +507,17 @@ enum Source {
 }
 
 impl Source {
+    /// Whether `endpoint` still has the answer this source was taken from, read in place
+    /// (no reference count is taken).
+    fn is_current(&self, endpoint: &Endpoint) -> bool {
+        match (endpoint, self) {
+            (Endpoint::Tcp { addrs, .. }, Self::Addrs(a)) => Arc::ptr_eq(&addrs.load(), a),
+            (Endpoint::Srv { targets, .. }, Self::Srv(a)) => Arc::ptr_eq(&targets.load(), a),
+            (Endpoint::Unix(_), Self::Fixed) => true,
+            _ => false,
+        }
+    }
+
     fn same(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Addrs(a), Self::Addrs(b)) => Arc::ptr_eq(a, b),
@@ -406,6 +539,17 @@ impl ServiceRuntime {
     /// Every resolved address of every backend, with the backend's weight and shared state.
     #[must_use]
     pub fn members(&self) -> Arc<[Arc<Member>]> {
+        // The request path: compare the cached answers with the live ones in place.
+        if let Some(cached) = self.members.load().as_ref()
+            && cached.sources.len() == self.backends.len()
+            && cached
+                .sources
+                .iter()
+                .zip(&self.backends)
+                .all(|(source, backend)| source.is_current(&backend.endpoint))
+        {
+            return cached.list.clone();
+        }
         let sources: Vec<Source> = self
             .backends
             .iter()
@@ -430,10 +574,14 @@ impl ServiceRuntime {
     }
 
     fn build_members(&self, sources: &[Source]) -> Arc<[Arc<Member>]> {
+        let now = std::time::Instant::now();
+        let slow = self.health.slow_start.as_ref();
+        // A backend that joins ramps up only when the pool already has one at full weight.
+        let join = slow.is_some_and(|s| s.on_join) && self.pool.has_settled_backend(slow, now);
         let mut list = Vec::new();
         for (backend, source) in self.backends.iter().zip(sources) {
-            // (candidate, weight, backup)
-            let candidates: Vec<(Candidate, u32, bool)> = match (&backend.endpoint, source) {
+            // (candidate, weight, priority)
+            let mut candidates: Vec<(Candidate, u32, u8)> = match (&backend.endpoint, source) {
                 (Endpoint::Tcp { host, .. }, Source::Addrs(addrs)) => addrs
                     .iter()
                     .map(|addr| {
@@ -441,11 +589,12 @@ impl ServiceRuntime {
                             host: host.clone(),
                             addr: *addr,
                         };
-                        (candidate, backend.weight, backend.backup)
+                        (candidate, backend.weight, backend.priority)
                     })
                     .collect(),
                 (Endpoint::Srv { .. }, Source::Srv(targets)) => {
-                    // RFC 2782: the lowest priority is used; higher ones only as backups.
+                    // RFC 2782: the lowest priority is used; higher ones only as backups, one
+                    // tier below the backend's own.
                     let best = targets.iter().map(|t| t.priority).min().unwrap_or(0);
                     targets
                         .iter()
@@ -455,7 +604,8 @@ impl ServiceRuntime {
                                 addr: t.addr,
                             };
                             let weight = backend.weight.saturating_mul(u32::from(t.weight.max(1)));
-                            (candidate, weight, backend.backup || t.priority > best)
+                            let tier = backend.priority + u8::from(t.priority > best);
+                            (candidate, weight, tier.min(MAX_TIER))
                         })
                         .collect()
                 }
@@ -463,20 +613,38 @@ impl ServiceRuntime {
                     vec![(
                         Candidate::Unix(path.clone()),
                         backend.weight,
-                        backend.backup,
+                        backend.priority,
                     )]
                 }
                 _ => Vec::new(),
             };
-            for (candidate, weight, backup) in candidates {
+            if let Some(guard) = &self.allowed {
+                candidates.retain(|(candidate, _, _)| match candidate {
+                    Candidate::Tcp { host, addr } => guard.admits(&self.name, host, *addr),
+                    // Refused at validation; never reached through a tenant's service.
+                    Candidate::Unix(_) => false,
+                });
+            }
+            let local = self
+                .selection
+                .zone
+                .as_ref()
+                .is_some_and(|zone| backend.zones.iter().any(|z| z == zone));
+            for (candidate, weight, priority) in candidates {
                 let id = candidate.to_string();
+                let (state, created) = self.pool.state_created(&id);
+                if created && join {
+                    state.join(now);
+                }
                 list.push(Arc::new(Member {
-                    state: self.pool.state(&id),
+                    state,
                     sticky: self.sticky.as_ref().map(|s| s.keys.token(&id)),
                     candidate,
                     id,
                     weight,
-                    backup,
+                    backup: priority > 0,
+                    priority,
+                    local,
                 }));
             }
         }
@@ -485,6 +653,9 @@ impl ServiceRuntime {
         list.into()
     }
 }
+
+/// The lowest priority tier (ADR-0031).
+pub const MAX_TIER: u8 = 7;
 
 /// A concrete backend address chosen for one attempt.
 #[derive(Debug, Clone, PartialEq, Eq)]

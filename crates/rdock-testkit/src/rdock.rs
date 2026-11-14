@@ -14,6 +14,7 @@ pub struct Rdock {
     pub dir: TempDir,
     pub admin: SocketAddr,
     binary: PathBuf,
+    env: Vec<(String, String)>,
 }
 
 impl Drop for Rdock {
@@ -35,6 +36,15 @@ impl Rdock {
 
     /// Like [`Self::start`]; the error is the process output.
     pub fn try_start(binary: &str, config: &str) -> Result<Self, String> {
+        Self::try_start_with_env(binary, config, &[])
+    }
+
+    /// Like [`Self::try_start`], with extra environment variables for the process.
+    pub fn try_start_with_env(
+        binary: &str,
+        config: &str,
+        env: &[(&str, &str)],
+    ) -> Result<Self, String> {
         let dir = tempfile::tempdir().unwrap();
         let admin_port = crate::free_port();
         let admin: SocketAddr = format!("127.0.0.1:{admin_port}").parse().unwrap();
@@ -43,6 +53,10 @@ impl Rdock {
             dir,
             admin,
             binary: PathBuf::from(binary),
+            env: env
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
         };
         rdock.write_config(config);
         rdock.spawn();
@@ -78,6 +92,7 @@ impl Rdock {
             .arg("--data-dir")
             .arg(self.data_dir())
             .env_remove("RDOCK_ADMIN_TOKEN")
+            .envs(self.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .stdout(std::fs::File::create(self.dir.path().join("access.log")).unwrap())
             .stderr(std::fs::File::create(self.dir.path().join("rdock.log")).unwrap())
             .stdin(Stdio::null())
@@ -120,6 +135,16 @@ impl Rdock {
 
     pub fn pid(&self) -> u32 {
         self.child.as_ref().unwrap().id()
+    }
+
+    /// The exit status of the process started here, once it has exited (it is reaped then).
+    pub fn try_exit(&mut self) -> Option<ExitStatus> {
+        let status = self
+            .child
+            .as_mut()
+            .and_then(|c| c.try_wait().ok().flatten())?;
+        self.child = None;
+        Some(status)
     }
 
     pub fn signal(&self, signal: &str) {
@@ -171,13 +196,24 @@ impl Rdock {
         headers: &[(&str, &str)],
         body: &str,
     ) -> Option<(u16, String, String)> {
+        self.admin_send_within(Duration::from_secs(20), method, path, headers, body)
+    }
+
+    /// [`Self::admin_send`] for a call that answers only when a long operation ends (an
+    /// upgrade waits for the new process): waits up to `wait` for the answer.
+    pub fn admin_send_within(
+        &self,
+        wait: Duration,
+        method: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: &str,
+    ) -> Option<(u16, String, String)> {
         use std::fmt::Write as _;
         use std::io::Write;
         let mut stream =
             std::os::unix::net::UnixStream::connect(self.data_dir().join("admin.sock")).ok()?;
-        stream
-            .set_read_timeout(Some(Duration::from_secs(20)))
-            .ok()?;
+        stream.set_read_timeout(Some(wait)).ok()?;
         let mut head = format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\n");
         for (name, value) in headers {
             let _ = write!(head, "{name}: {value}\r\n");
@@ -239,6 +275,20 @@ impl Rdock {
     /// Path of a file in the test directory.
     pub fn path(&self, name: &str) -> PathBuf {
         self.dir.path().join(name)
+    }
+
+    /// Ends the process with `SIGKILL` (nothing is cleaned up or released) and waits for it.
+    pub fn kill(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+
+    /// Starts the process again after [`Self::kill`] and waits until it is ready.
+    pub fn start_again(&mut self) -> Result<(), String> {
+        self.spawn();
+        self.wait_ready(Duration::from_secs(30))
     }
 
     /// Restarts the process with the current configuration file.

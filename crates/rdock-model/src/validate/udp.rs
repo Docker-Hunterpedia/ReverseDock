@@ -173,12 +173,8 @@ impl Validator<'_> {
             let backends = format!("{path}.backends");
             if service.backends.is_empty() {
                 self.error(&backends, "the service has no backends");
-            } else if service.backends.iter().all(|b| b.backup) {
-                self.error(
-                    &backends,
-                    "every backend is a backup; at least one must be a primary",
-                );
             }
+            self.check_backend_tiers(&path, &service.backends, true);
             for (i, backend) in service.backends.iter().enumerate() {
                 let p = path_index(&backends, i);
                 if backend.weight == 0 {
@@ -308,7 +304,7 @@ mod tests {
         });
         let found = errors(value);
         assert!(
-            has(&found, "udp_routes.bad.match", "ClientIP only"),
+            has(&found, "udp_routes.bad.match", "UDP routes accept ClientIP"),
             "{found:?}"
         );
         assert!(has(&found, "udp_routes.bad.listeners[0]", "is `http`"));

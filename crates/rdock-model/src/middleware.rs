@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+pub use crate::values::{AbuseEvent, AbuseKey};
 use crate::values::{ByteSize, Duration, HttpUrl, IpNetwork, RateLimitKey};
 
 /// A reusable request/response policy, selected by `type`.
@@ -93,6 +94,107 @@ pub enum Middleware {
     /// OpenID Connect login for browsers: authorization code flow with PKCE, a stateless
     /// encrypted session cookie, claims to headers and to the consumer (F-GW-01).
     Oidc(Box<crate::oidc::OidcConfig>),
+    /// Count abuse signals (response statuses, failed authentications) per key in a window
+    /// and ban keys past a threshold for a while (H-SEC-01). Per instance; bans survive
+    /// restarts and binary upgrades.
+    Abuse(AbuseConfig),
+    /// An adaptive concurrency limit (H-LB-04, ADR-0031): it learns how many requests the
+    /// routes using it can have in flight from their latency (`aimd` or `gradient`) and
+    /// answers the rest with `503` and `Retry-After`, routes of the lowest `priority_class`
+    /// first. Off unless configured.
+    Admission(AdmissionConfig),
+}
+
+/// `type: abuse`: counts events per key in a fixed window and bans the key past `threshold`.
+///
+/// Put it first in the route's middlewares, so it sees the answers of the authentication
+/// middlewares after it and refuses banned keys before they run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+#[schemars(inline)]
+pub struct AbuseConfig {
+    /// What to count by: `client_ip` (the default; IPv6 by /64), `consumer`, `ja4` or
+    /// `header:<Name>`. Requests without a consumer or fingerprint count by client address.
+    pub key: AbuseKey,
+    /// What counts: status codes (`401`), classes (`4xx`) and `auth_failure` (an
+    /// authentication middleware refused the credentials). Default `[401, 403]`.
+    pub events: Vec<AbuseEvent>,
+    /// Events within one `window` that start a ban. Default 20.
+    pub threshold: u32,
+    /// The counting window. Default 1m.
+    pub window: Duration,
+    /// How long a ban lasts. Default 10m.
+    pub ban: Duration,
+    /// What a banned key gets: `deny` (`403`, problem type `banned`, the default), `tarpit`
+    /// (held for `tarpit.delay`, then denied) or `tag` (served; the access log and later
+    /// middlewares see `abuse: tagged`).
+    pub action: AbuseAction,
+    /// `action: tarpit`.
+    pub tarpit: Tarpit,
+    /// Client networks never counted or banned. Default the loopback networks; the
+    /// `security.trusted_proxies` networks are always added, so a proxy whose clients are not
+    /// resolved can never ban itself, and with it everyone behind it.
+    pub exempt: Vec<IpNetwork>,
+    /// Keys counted at once; past it, the oldest counters are dropped. Default 100000.
+    pub max_keys: u32,
+    /// Bans at once. The ban list is separate from the counters and nothing evicts a ban
+    /// before it ends: when it is full, new bans are refused and counted in
+    /// `rdock_abuse_bans_refused_total`. Default 10000.
+    pub max_bans: u32,
+}
+
+impl Default for AbuseConfig {
+    fn default() -> Self {
+        Self {
+            key: AbuseKey::ClientIp,
+            events: vec![AbuseEvent::Status(401), AbuseEvent::Status(403)],
+            threshold: 20,
+            window: Duration::from_secs(60),
+            ban: Duration::from_secs(600),
+            action: AbuseAction::Deny,
+            tarpit: Tarpit::default(),
+            exempt: ["127.0.0.0/8", "::1/128"]
+                .iter()
+                .filter_map(|n| n.parse().ok())
+                .collect(),
+            max_keys: 100_000,
+            max_bans: 10_000,
+        }
+    }
+}
+
+/// What a banned key gets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AbuseAction {
+    /// `403` with the problem type `banned`.
+    #[default]
+    Deny,
+    /// Held for `tarpit.delay`, then `403`.
+    Tarpit,
+    /// Served; marked in the access log and for later middlewares.
+    Tag,
+}
+
+/// How `action: tarpit` holds requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Tarpit {
+    /// How long a request is held before the `403`. Default 5s, at most 60s.
+    pub delay: Duration,
+    /// Requests held at once, all keys together; past it, banned requests are denied at once
+    /// (holding connections costs the proxy too: HAProxy's manual warns that a tarpit "can
+    /// make things worse"). Default 100.
+    pub max_held: u32,
+}
+
+impl Default for Tarpit {
+    fn default() -> Self {
+        Self {
+            delay: Duration::from_secs(5),
+            max_held: 100,
+        }
+    }
 }
 
 /// Cloudflare Access application tokens (`type: cloudflare_access`, W-CF-06, ADR-0030).
@@ -178,6 +280,7 @@ impl CloudflareAccessConfig {
             forward_token: true,
             consumer_claim: None,
             groups_claim: None,
+            trusted_groups: Vec::new(),
             map_to_consumers: false,
             unverified_emails: false,
         })
@@ -321,6 +424,12 @@ pub struct JwtConfig {
     /// `consumer_claim`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub groups_claim: Option<String>,
+    /// Groups from `groups_claim` that count for `key: group` and for group `overrides` of
+    /// `rate_limit` and `quota`, as if configured. Other token groups are kept on the
+    /// consumer (metering, headers) but never share a configured group's budget or override,
+    /// and a consumer with only those is counted on its own.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trusted_groups: Vec<String>,
     /// With `consumer_claim`: treat a name that `consumers` defines as that consumer, adding
     /// its groups and sharing its quota, rate-limit and cache identity with its API keys
     /// (other names stay keyed on the issuer). Off by default: a token's consumer is a
@@ -437,7 +546,35 @@ pub struct ClientCertConfig {
     pub required: bool,
     /// Names a certificate must have one of: its common name or a DNS, URI or email SAN.
     /// `*` matches any run of characters, e.g. `*.clients.example.com`. Any name when empty.
+    /// The typed lists below check one field each and are safer: a URI pattern there cannot
+    /// be satisfied by a common name that carries the same text.
     pub allow: Vec<String>,
+    /// Subject common names, one must match (`*` globs). Every typed list that is set must
+    /// match, together with `allow`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub subjects: Vec<String>,
+    /// Subject organizations (O), one must match (`*` globs).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub organizations: Vec<String>,
+    /// DNS SANs, one must match (`*` globs).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub dns: Vec<String>,
+    /// URI SANs, one must match (`*` globs).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub uris: Vec<String>,
+    /// Email SANs, one must match (`*` globs).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub emails: Vec<String>,
+    /// Certificate serial numbers in hex (`0a1b…`, colons allowed), exact.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub serials: Vec<String>,
+    /// SHA-256 fingerprints of the certificate in hex (colons allowed), exact: pins.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sha256: Vec<String>,
+    /// SPIFFE X.509-SVID rules (H-SEC-05): the certificate must be a valid SVID of one of the
+    /// trust domains, and its ID one of `ids` or under one of `id_prefixes`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spiffe: Option<SpiffeRules>,
     /// Headers that pass the identity to the backend.
     pub forward: ClientCertForward,
 }
@@ -447,9 +584,41 @@ impl Default for ClientCertConfig {
         Self {
             required: true,
             allow: Vec::new(),
+            subjects: Vec::new(),
+            organizations: Vec::new(),
+            dns: Vec::new(),
+            uris: Vec::new(),
+            emails: Vec::new(),
+            serials: Vec::new(),
+            sha256: Vec::new(),
+            spiffe: None,
             forward: ClientCertForward::None,
         }
     }
+}
+
+/// SPIFFE X.509-SVID checks on a client certificate (SPIFFE standards `X509-SVID.md` and
+/// `SPIFFE-ID.md`, commit 5d15e3ee of github.com/spiffe/spiffe, 2026-11-13): exactly one URI
+/// SAN, scheme `spiffe`, a valid trust domain and a non-root path, a leaf that is not a CA and
+/// may not sign certificates or CRLs. The chain itself is verified by the listener's
+/// `client_auth`, whose CA bundle must be the trust domain's.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct SpiffeRules {
+    /// Trust domains accepted, e.g. `prod.example.com`. Required.
+    pub trust_domains: Vec<String>,
+    /// SPIFFE IDs accepted exactly, e.g. `spiffe://prod.example.com/ns/web/sa/api`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ids: Vec<String>,
+    /// SPIFFE ID prefixes, matched segment by segment: `spiffe://prod.example.com/ns/web`
+    /// accepts that ID and every ID below it, never `/ns/webshop`. With neither `ids` nor
+    /// `id_prefixes`, any ID of the trust domains is accepted.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub id_prefixes: Vec<String>,
+    /// Make the SPIFFE ID the request's consumer (for `rate_limit` and `quota` by consumer,
+    /// metering and the access log). Its issuer is `spiffe://<trust domain>`, so it never
+    /// shares counters with an API-key or token consumer of the same name. Off by default.
+    pub consumer: bool,
 }
 
 /// How a client certificate is passed to the backend. Copies of these headers sent by clients
@@ -943,6 +1112,171 @@ pub struct IpListConfig {
     pub cidrs: Vec<IpNetwork>,
 }
 
+/// `type: admission`: an adaptive concurrency limit shared by every route that uses this
+/// middleware. The limit moves between `min` and `max`; a request is admitted while the
+/// requests in flight stay below the limit's share for the route's `priority_class`
+/// (`critical` 100 %, `normal` `shares.normal`, `sheddable` `shares.sheddable`), otherwise it
+/// gets `503` with `Retry-After`. There is no queue. `critical` and `normal` requests also
+/// keep a reserve of at least two places whenever the limit has them.
+///
+/// Only requests that reached a backend teach the limit: the latency to the backend's
+/// response headers, and as drops the backend's `502`, `503` and `504`, a failed connect and
+/// an upstream timeout. Answers of rdock itself (another middleware's reply, a cache hit, an
+/// error page) and requests the client abandoned are not samples. A request holds its place
+/// until its response is complete, as in Envoy; an upgraded connection (`101`) gives it back
+/// when the upgrade is answered, so idle `WebSocket`s never fill the limit.
+///
+/// `aimd` (Netflix concurrency-limits' `AIMDLimit`): a slow sample or a drop multiplies the
+/// limit by `backoff_percent`; any other sample adds one while at least half the limit is in
+/// use. `gradient` (Envoy's adaptive concurrency filter with Netflix's `Gradient2Limit`
+/// smoothing): the limit follows `tolerance × no-load latency / sample latency`, clamped to
+/// 0.5–1, plus `queue`, smoothed by `smoothing_percent`. The no-load latency is measured at
+/// start and then every `interval` (± `jitter_percent`) by pinning the limit to `min` until
+/// `probe` requests admitted at that concurrency have answered (their median), or until
+/// `probe_timeout` has passed (the median of those that did, or the previous value when
+/// none did); requests over `min` get `503` meanwhile, as Envoy warns too.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+#[serde(deny_unknown_fields)]
+pub struct AdmissionConfig {
+    /// `aimd` or `gradient`.
+    pub mode: AdmissionMode,
+    /// The lowest limit (default 3, Envoy's `min_concurrency`).
+    #[serde(default = "admission_min")]
+    pub min: u32,
+    /// The highest limit (default 1000, Envoy's `max_concurrency_limit`).
+    #[serde(default = "admission_max")]
+    pub max: u32,
+    /// The limit at start and after a reload (default 20, Netflix's, kept within `min`–`max`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial: Option<u32>,
+    /// `aimd` only: a sample slower than this counts as a drop (default 5s, Netflix's
+    /// `timeout`). Measured from admission to the response headers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latency: Option<Duration>,
+    /// `aimd` only: the limit is multiplied by this percentage on a drop (default 90, 50–99).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backoff_percent: Option<u32>,
+    /// `gradient` only: how much slower than the no-load latency a sample may be before the
+    /// limit shrinks, in percent (default 150, Netflix's `rttTolerance` 1.5; 100–1000).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tolerance_percent: Option<u32>,
+    /// `gradient` only: the weight of a new estimate, in percent (default 20, 1–100).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smoothing_percent: Option<u32>,
+    /// `gradient` only: requests allowed above the estimate (default 4, Netflix's
+    /// `queueSize`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue: Option<u32>,
+    /// `gradient` only: time between two measurements of the no-load latency (default 60s,
+    /// the `min_rtt_calc_params.interval` of Envoy's documented example; 1s–1h).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interval: Option<Duration>,
+    /// `gradient` only: a random part of `interval` added to it, in percent, so instances do
+    /// not measure at the same moment (default 15, Envoy's `jitter`; 0–100).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jitter_percent: Option<u32>,
+    /// `gradient` only: samples at `min` concurrency that make one measurement of the no-load
+    /// latency (default 50, Envoy's `request_count`; 5–1000).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe: Option<u32>,
+    /// `gradient` only: the longest a measurement pins the limit to `min` (default 5s;
+    /// 100ms–60s). When it ends early, the median of the samples it has becomes the
+    /// reference; without any, the previous reference stays.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe_timeout: Option<Duration>,
+    /// The share of the limit `normal` and `sheddable` routes may fill, in percent.
+    #[serde(default)]
+    pub shares: AdmissionShares,
+    /// `Retry-After` of a shed request (default 1s).
+    #[serde(default = "one_second")]
+    pub retry_after: Duration,
+}
+
+impl AdmissionConfig {
+    /// Highest `max`.
+    pub const MAX_LIMIT: u32 = 100_000;
+    /// Default `initial`.
+    pub const INITIAL: u32 = 20;
+    /// Default `latency` of `aimd`.
+    pub const LATENCY: Duration = Duration::from_secs(5);
+    /// Default `backoff_percent`.
+    pub const BACKOFF_PERCENT: u32 = 90;
+    /// Default `tolerance_percent`.
+    pub const TOLERANCE_PERCENT: u32 = 150;
+    /// Default `smoothing_percent`.
+    pub const SMOOTHING_PERCENT: u32 = 20;
+    /// Default `queue`.
+    pub const QUEUE: u32 = 4;
+    /// Default `interval`.
+    pub const INTERVAL: Duration = Duration::from_secs(60);
+    /// Default `jitter_percent`.
+    pub const JITTER_PERCENT: u32 = 15;
+    /// Default `probe`.
+    pub const PROBE: u32 = 50;
+    /// Default `probe_timeout`.
+    pub const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+}
+
+const fn admission_min() -> u32 {
+    3
+}
+
+const fn admission_max() -> u32 {
+    1000
+}
+
+/// How `admission` adapts its limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AdmissionMode {
+    /// Additive increase, multiplicative decrease on slow or failed samples.
+    Aimd,
+    /// The measured no-load latency against each sample's (Envoy's gradient).
+    Gradient,
+}
+
+/// How much of the limit each lower priority class may fill.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct AdmissionShares {
+    /// Routes with `priority_class: normal`, in percent of the limit (default 90).
+    pub normal: u32,
+    /// Routes with `priority_class: sheddable`, in percent of the limit (default 75; at most
+    /// `normal`).
+    pub sheddable: u32,
+}
+
+impl Default for AdmissionShares {
+    fn default() -> Self {
+        Self {
+            normal: 90,
+            sheddable: 75,
+        }
+    }
+}
+
+/// Where a limit is counted (ADR-0031).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LimitScope {
+    /// Each instance counts on its own: N instances admit up to N times the limit.
+    #[default]
+    Instance,
+    /// The instances of a cluster share the limit through `cluster.limits` (the cluster store
+    /// or Redis), within a documented bound; each falls back to its share when the store is
+    /// away. Without a cluster it counts per instance.
+    Cluster,
+}
+
+impl LimitScope {
+    /// Whether this is the default (`instance`).
+    #[must_use]
+    pub fn is_instance(&self) -> bool {
+        *self == Self::Instance
+    }
+}
+
 /// Token-bucket rate limit: `average` requests per `period`, bursts up to `burst`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
@@ -958,14 +1292,20 @@ pub struct RateLimitConfig {
     /// Period of `average`.
     #[serde(default = "one_second")]
     pub period: Duration,
-    /// Group → limit for consumers in that group, with `key: consumer`. The first of the
-    /// consumer's groups (in its `groups` order) that has an override wins.
+    /// Group → limit for consumers in that group, with `key: consumer` or `key: group`. With
+    /// `consumer`, the first of the consumer's groups (in its `groups` order) that has an
+    /// override wins; with `group`, the override of the primary group (the first one) applies.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub overrides: BTreeMap<String, crate::gateway::RateOverride>,
     /// `draft` adds `RateLimit-Policy` and `RateLimit` to responses
     /// (`draft-ietf-httpapi-ratelimit-headers-11`). Off by default.
     #[serde(default)]
     pub headers: crate::gateway::LimitHeaders,
+    /// `instance` (default) or `cluster`. With `cluster`, the cluster admits at most
+    /// `average` requests per key in each `period` (fixed windows from the Unix epoch), within
+    /// the bound of `cluster.limits`; each instance's own token bucket still shapes bursts.
+    #[serde(default, skip_serializing_if = "LimitScope::is_instance")]
+    pub scope: LimitScope,
 }
 
 const fn one_second() -> Duration {
@@ -987,6 +1327,9 @@ pub struct InFlightConfig {
     /// How long a queued request waits before it gets `429`.
     #[serde(default = "five_seconds")]
     pub queue_timeout: Duration,
+    /// Only `instance`: a cluster-wide count of requests in flight is planned.
+    #[serde(default, skip_serializing_if = "LimitScope::is_instance")]
+    pub scope: LimitScope,
 }
 
 /// Response bytes per second per key.

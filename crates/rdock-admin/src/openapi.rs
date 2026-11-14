@@ -75,6 +75,8 @@ pub(crate) struct AuditRecord {
     prev: String,
     config_before: Option<String>,
     config_after: Option<String>,
+    /// The tenant of a tenant-scoped caller.
+    tenant: Option<String>,
 }
 
 /// The OpenAPI document as pretty JSON with a final newline, built once.

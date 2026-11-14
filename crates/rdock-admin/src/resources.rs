@@ -14,7 +14,9 @@ use utoipa::{IntoParams, ToSchema};
 use crate::State;
 use crate::audit::Event;
 use crate::caller::{Access, Caller, need};
-use crate::config_api::{api_config, if_match, masked, owners, write, writes_allowed};
+use crate::config_api::{
+    api_config, if_match, masked, owners, write, write_scoped, writes_allowed,
+};
 use crate::routes::error;
 
 macro_rules! check {
@@ -101,6 +103,7 @@ pub(crate) async fn list(
         .as_object()
         .map(|map| {
             map.iter()
+                .filter(|(name, _)| caller.scope().is_none_or(|s| s.owns_merged(name)))
                 .map(|(name, object)| {
                     json!({ "name": name, "owner": owners[kind][name], "spec": object })
                 })
@@ -125,6 +128,19 @@ pub(crate) async fn get(
     check!(need(&caller, Access::Viewer));
     let Some(kind) = section(&kind) else {
         return error(StatusCode::NOT_FOUND, "not found");
+    };
+    let name = match caller.scope() {
+        // Refused whether or not it exists, so a tenant learns nothing of other names.
+        Some(scope) if !scope.owns_requested(&name) => {
+            return crate::caller::tenant_denied(
+                &state,
+                &caller,
+                format!("/api/v1/{kind}/{name}"),
+                "the object is not under the tenant's prefix",
+            );
+        }
+        Some(_) if !name.ends_with("@api") => format!("{name}@api"),
+        _ => name,
     };
     let Some(config) = effective(&state).await else {
         return gone();
@@ -167,6 +183,16 @@ async fn change(
     let Some(kind) = section(&target.0) else {
         return error(StatusCode::NOT_FOUND, "not found");
     };
+    if let Some(scope) = caller.scope()
+        && !scope.owns_requested(&target.1)
+    {
+        return crate::caller::tenant_denied(
+            state,
+            caller,
+            format!("/api/v1/{kind}/{}", target.1),
+            "the object is not under the tenant's prefix",
+        );
+    }
     let name = match api_name(&target.1) {
         Ok(name) => name,
         Err(owner) => {
@@ -188,6 +214,9 @@ async fn change(
     let Some((mut fragment, _)) = api_config(state).await else {
         return gone();
     };
+    if let Some(scope) = caller.scope() {
+        fragment = scope.view(&fragment);
+    }
     if !fragment[kind].is_object() {
         fragment[kind] = json!({});
     }
@@ -203,6 +232,9 @@ async fn change(
                 return error(StatusCode::NOT_FOUND, "no such object");
             }
         }
+    }
+    if caller.scope().is_some() {
+        return write_scoped(state, caller, fragment, tag, ("config.apply", None)).await;
     }
     write(state, caller, fragment, tag, "config.apply").await
 }
@@ -318,7 +350,13 @@ pub(crate) async fn backends(
         .spawn(async move { control.backends().await })
         .await
     {
-        Ok(list) => axum::Json(list).into_response(),
+        Ok(mut list) => {
+            // A tenant sees the backends of its own services only.
+            if let (Some(scope), Some(items)) = (caller.scope(), list.as_array_mut()) {
+                items.retain(|s| s["service"].as_str().is_some_and(|n| scope.owns_merged(n)));
+            }
+            axum::Json(list).into_response()
+        }
         Err(_) => gone(),
     }
 }
@@ -337,6 +375,16 @@ async fn set_drained(
     drained: bool,
 ) -> Response {
     check!(need(caller, Access::Operator));
+    if let Some(scope) = caller.scope()
+        && !scope.owns_merged(&target.service)
+    {
+        return crate::caller::tenant_denied(
+            state,
+            caller,
+            format!("/api/v1/backends/{}", target.service),
+            "the service is not under the tenant's prefix",
+        );
+    }
     let control = state.control.clone();
     let (service, backend) = (target.service.clone(), target.backend.clone());
     let Ok(found) = state
@@ -472,7 +520,18 @@ pub(crate) async fn metrics_summary(
         .spawn(async move { control.metrics_summary(window).await })
         .await
     {
-        Ok(summary) => axum::Json(summary).into_response(),
+        Ok(mut summary) => {
+            // A tenant sees its own routes and services, not the proxy's total.
+            if let Some(scope) = caller.scope() {
+                summary["total"] = Value::Null;
+                for section in ["routes", "services"] {
+                    if let Some(map) = summary[section].as_object_mut() {
+                        map.retain(|name, _| scope.owns_merged(name));
+                    }
+                }
+            }
+            axum::Json(summary).into_response()
+        }
         Err(_) => gone(),
     }
 }

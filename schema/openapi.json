@@ -132,6 +132,13 @@
             "minimum": 0,
             "type": "integer"
           },
+          "tenant": {
+            "description": "The tenant of a tenant-scoped caller.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "time": {
             "description": "RFC 3339.",
             "type": "string"
@@ -170,6 +177,427 @@
         "required": [
           "service",
           "backend"
+        ],
+        "type": "object"
+      },
+      "ClusterHalt": {
+        "description": "Why a rollout halted.",
+        "properties": {
+          "at": {
+            "description": "RFC 3339.",
+            "type": "string"
+          },
+          "instance": {
+            "description": "The instance that refused, or the canary that did not report.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "at",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "ClusterInstance": {
+        "description": "One enrolled data plane.",
+        "properties": {
+          "certificate_not_after": {
+            "description": "Expiry of its client certificate (its cluster identity), RFC 3339.",
+            "type": "string"
+          },
+          "enrolled_at": {
+            "description": "RFC 3339.",
+            "type": "string"
+          },
+          "last_error": {
+            "description": "The reason of its last refusal, `revision N: message`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_report": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ClusterReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_seen": {
+            "description": "When it last called the control plane, RFC 3339.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "latest": {
+            "description": "The newest published revision.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "name": {
+            "description": "Its name in the cluster.",
+            "type": "string"
+          },
+          "revoked": {
+            "type": "boolean"
+          },
+          "serving": {
+            "description": "The revision it serves, as it last reported.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ClusterInstanceState"
+          },
+          "target": {
+            "description": "The revision the rollout gives it now (the newest, or the stable one while a canary\nruns or after a halt).",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "version": {
+            "description": "The rdock version it last reported.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "state",
+          "serving",
+          "target",
+          "latest",
+          "enrolled_at",
+          "certificate_not_after",
+          "revoked"
+        ],
+        "type": "object"
+      },
+      "ClusterInstanceState": {
+        "description": "How an instance stands.",
+        "enum": [
+          "synced",
+          "behind",
+          "error",
+          "offline",
+          "revoked"
+        ],
+        "type": "string"
+      },
+      "ClusterInstances": {
+        "description": "`GET /api/v1/cluster/instances`.",
+        "properties": {
+          "cluster_id": {
+            "type": "string"
+          },
+          "instances": {
+            "items": {
+              "$ref": "#/components/schemas/ClusterInstance"
+            },
+            "type": "array"
+          },
+          "latest": {
+            "description": "The newest published revision.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "name": {
+            "description": "`control.name`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rollout": {
+            "$ref": "#/components/schemas/ClusterRollout"
+          }
+        },
+        "required": [
+          "cluster_id",
+          "latest",
+          "rollout",
+          "instances"
+        ],
+        "type": "object"
+      },
+      "ClusterPublishRequest": {
+        "description": "`POST /api/v1/cluster/revisions`: a document to publish, or a revision to roll back to.",
+        "properties": {
+          "document": {
+            "description": "The configuration to publish (an `rdock.yaml` as JSON, without `cluster` and\n`control`)."
+          },
+          "rollback_to": {
+            "description": "Publish this earlier revision's document again, as a new revision.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ClusterReport": {
+        "description": "A data plane's last report on a bundle.",
+        "properties": {
+          "at": {
+            "description": "RFC 3339.",
+            "type": "string"
+          },
+          "diagnostics": {
+            "description": "The data plane's diagnostics (`severity`, `path`, `message`, `hint`) for a NACK, or\nits warnings.",
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "revision": {
+            "description": "The revision reported on.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "verdict": {
+            "description": "`ack` or `nack`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision",
+          "verdict",
+          "diagnostics",
+          "at"
+        ],
+        "type": "object"
+      },
+      "ClusterRevision": {
+        "description": "One published revision.",
+        "properties": {
+          "published_at": {
+            "type": "string"
+          },
+          "published_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "refused_by": {
+            "description": "Instances whose last report refused this revision, with their diagnostics.",
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "revision": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rollback_of": {
+            "description": "The revision whose document this one republishes.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rollout": {
+            "description": "How its rollout ended or stands: `state` (`canary`, `soaking`, `halted`, `complete`,\n`abandoned`, `superseded`), `reason`, `at`.",
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "sha256": {
+            "description": "SHA-256 of the document's canonical JSON.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision",
+          "sha256",
+          "published_at",
+          "refused_by"
+        ],
+        "type": "object"
+      },
+      "ClusterRevisions": {
+        "description": "`GET /api/v1/cluster/revisions`.",
+        "properties": {
+          "cluster_id": {
+            "type": "string"
+          },
+          "latest": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "revisions": {
+            "items": {
+              "$ref": "#/components/schemas/ClusterRevision"
+            },
+            "type": "array"
+          },
+          "rollout": {
+            "$ref": "#/components/schemas/ClusterRollout"
+          }
+        },
+        "required": [
+          "cluster_id",
+          "latest",
+          "rollout",
+          "revisions"
+        ],
+        "type": "object"
+      },
+      "ClusterRollout": {
+        "description": "The rollout of the newest revision.",
+        "properties": {
+          "canary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "canary_acked_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "completed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "halt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ClusterHalt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mode": {
+            "description": "`canary`, or `all` (mode `all`, the first revision, rollbacks).",
+            "type": "string"
+          },
+          "offered": {
+            "description": "Instances given `revision`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/ClusterRolloutPhase"
+          },
+          "resumed_by": {
+            "description": "Who resumed it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "revision": {
+            "description": "The revision being rolled out.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/ClusterRolloutSettings"
+          },
+          "soak_ends_at": {
+            "description": "While soaking: when the rest are given the revision.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stable": {
+            "description": "The last revision whose rollout completed; instances not given `revision` serve it.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "revision",
+          "stable",
+          "mode",
+          "phase",
+          "offered",
+          "settings"
+        ],
+        "type": "object"
+      },
+      "ClusterRolloutPhase": {
+        "description": "Where a rollout stands.",
+        "enum": [
+          "none",
+          "canary",
+          "soaking",
+          "complete",
+          "halted"
+        ],
+        "type": "string"
+      },
+      "ClusterRolloutSettings": {
+        "description": "The rollout settings in effect (`control.rollout`).",
+        "properties": {
+          "canary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "canary_timeout_seconds": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "mode": {
+            "description": "`canary` or `all`.",
+            "type": "string"
+          },
+          "soak_seconds": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "mode",
+          "soak_seconds",
+          "canary_timeout_seconds"
         ],
         "type": "object"
       },
@@ -269,6 +697,21 @@
         ],
         "type": "object"
       },
+      "JoinTokenRequest": {
+        "description": "`POST /api/v1/cluster/tokens`.",
+        "properties": {
+          "ttl_seconds": {
+            "description": "How long the token stays usable, in seconds (60 to 2,592,000); `control.join_token_ttl`\nwhen omitted.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "Listed": {
         "description": "What `GET /api/v1/auth/sessions` shows of a session.",
         "properties": {
@@ -348,6 +791,13 @@
           },
           "role": {
             "$ref": "#/components/schemas/Role"
+          },
+          "tenant": {
+            "description": "Scope the user to this tenant (`tenants.<name>`).",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -548,6 +998,13 @@
           },
           "role": {
             "$ref": "#/components/schemas/Access"
+          },
+          "tenant": {
+            "description": "Scope the token to this tenant. A tenant-scoped caller's tokens always have its\ntenant.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -602,6 +1059,13 @@
           },
           "role": {
             "$ref": "#/components/schemas/Access"
+          },
+          "tenant": {
+            "description": "The tenant the token is scoped to, if any.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -612,6 +1076,24 @@
           "created_at",
           "allowed_from"
         ],
+        "type": "object"
+      },
+      "UpgradeBody": {
+        "additionalProperties": false,
+        "description": "What `POST /upgrade` takes.",
+        "properties": {
+          "allow_downgrade": {
+            "description": "Install a binary whose version is older than the running one. Default `false`: an older\nversion (perhaps one with a known vulnerability, signed by the same key) is refused.",
+            "type": "boolean"
+          },
+          "binary": {
+            "description": "The new binary; `upgrade.binary` (default `/usr/local/bin/rdock`) when omitted.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
         "type": "object"
       },
       "UserChange": {
@@ -642,6 +1124,13 @@
                 "type": "null"
               }
             ]
+          },
+          "tenant": {
+            "description": "Scopes the user to this tenant; `null` removes the scope.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "type": "object"
@@ -664,6 +1153,13 @@
           },
           "role": {
             "$ref": "#/components/schemas/Role"
+          },
+          "tenant": {
+            "description": "The tenant the user is scoped to (`tenants.<name>`), if any.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -674,6 +1170,52 @@
           "mfa"
         ],
         "type": "object"
+      },
+      "rdock.AbuseAction": {
+        "description": "What a banned key gets.",
+        "oneOf": [
+          {
+            "const": "deny",
+            "description": "`403` with the problem type `banned`.",
+            "type": "string"
+          },
+          {
+            "const": "tarpit",
+            "description": "Held for `tarpit.delay`, then `403`.",
+            "type": "string"
+          },
+          {
+            "const": "tag",
+            "description": "Served; marked in the access log and for later middlewares.",
+            "type": "string"
+          }
+        ]
+      },
+      "rdock.AbuseEvent": {
+        "examples": [
+          401,
+          "4xx",
+          "auth_failure"
+        ],
+        "oneOf": [
+          {
+            "maximum": 599,
+            "minimum": 400,
+            "type": "integer"
+          },
+          {
+            "pattern": "^([45]xx|auth_failure|[45][0-9][0-9])$",
+            "type": "string"
+          }
+        ]
+      },
+      "rdock.AbuseKey": {
+        "examples": [
+          "client_ip",
+          "ja4"
+        ],
+        "pattern": "^(client_ip|consumer|ja4|header:[A-Za-z0-9!#$%&'*+.^_`|~-]+)$",
+        "type": "string"
       },
       "rdock.AccessLog": {
         "additionalProperties": false,
@@ -1174,6 +1716,42 @@
             "description": "Lifetime of a new token when its creator gives none, in days (1–365).",
             "format": "uint16",
             "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "rdock.AdmissionMode": {
+        "description": "How `admission` adapts its limit.",
+        "oneOf": [
+          {
+            "const": "aimd",
+            "description": "Additive increase, multiplicative decrease on slow or failed samples.",
+            "type": "string"
+          },
+          {
+            "const": "gradient",
+            "description": "The measured no-load latency against each sample's (Envoy's gradient).",
+            "type": "string"
+          }
+        ]
+      },
+      "rdock.AdmissionShares": {
+        "additionalProperties": false,
+        "description": "How much of the limit each lower priority class may fill.",
+        "properties": {
+          "normal": {
+            "default": 90,
+            "description": "Routes with `priority_class: normal`, in percent of the limit (default 90).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sheddable": {
+            "default": 75,
+            "description": "Routes with `priority_class: sheddable`, in percent of the limit (default 75; at most\n`normal`).",
+            "format": "uint32",
             "minimum": 0,
             "type": "integer"
           }
@@ -1851,8 +2429,25 @@
           },
           "backup": {
             "default": false,
-            "description": "Only used when no primary backend is available.",
+            "description": "Only used when no primary backend is available: the same as `priority: 1`.",
             "type": "boolean"
+          },
+          "for_zones": {
+            "description": "Zones whose proxies should use this backend under `locality: { mode: prefer }`, instead\nof its own `zone` (Kubernetes topology hints, `hints.forZones`).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "priority": {
+            "description": "Priority tier from 0 (the default, used first) to 7. See the service's `failover`.\nNot together with `backup`.",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "weight": {
             "default": 1,
@@ -1860,6 +2455,13 @@
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
+          },
+          "zone": {
+            "description": "The zone the backend runs in, e.g. `eu-west-1a`, for `locality: { mode: prefer }`.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2125,6 +2727,188 @@
           }
         ]
       },
+      "rdock.Cluster": {
+        "additionalProperties": false,
+        "description": "The data-plane side of a cluster.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "control": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ClusterControl"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The control plane this data plane takes its configuration from."
+          },
+          "instance": {
+            "description": "This instance's name in leases and the control plane's instance list: letters, digits,\n`.`, `-` and `_`, at most 63 characters. Default: the identity the control plane gave\nat enrolment, or (without a control plane) an id generated once and kept in\n`$RDOCK_DATA_DIR/cluster/instance`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "limits": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ClusterLimits"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How `rate_limit` and `quota` with `scope: cluster` share their budgets."
+          },
+          "store": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ClusterStore"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where certificates, the ACME account, leases and challenge answers are shared. Default:\nthe control plane when `control` is set."
+          }
+        },
+        "type": "object"
+      },
+      "rdock.ClusterControl": {
+        "additionalProperties": false,
+        "description": "How a data plane reaches its control plane.",
+        "properties": {
+          "ca_file": {
+            "description": "The cluster CA certificate (PEM), as `rdock control ca` prints it. One of `ca_file` and\n`ca_pin` is required.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ca_pin": {
+            "description": "The SHA-256 of the cluster CA certificate (DER), as `sha256:<64 hex digits>`; `rdock\ncontrol token create` prints it. The first connection accepts the control plane only\nwhen its chain contains a CA with this digest; the CA is then kept in `identity_dir`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "identity_dir": {
+            "description": "Where the instance's key, certificate and the cluster CA are kept (mode 0700). Default\n`$RDOCK_DATA_DIR/cluster`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "join_token": {
+            "description": "The single-use join token from `rdock control token create`, used only while the\ninstance has no identity yet. A secret: reference a file, e.g.\n`\"${file:/run/secrets/rdock-join}\"`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "poll_timeout": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "30s",
+            "description": "How long one request for the next bundle waits on the control plane before it is asked\nagain. Default 30s (5s–5m)."
+          },
+          "url": {
+            "$ref": "#/components/schemas/rdock.HttpUrl",
+            "description": "The control plane's cluster address, e.g. `https://control.example.com:7443`. Always\n`https`."
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      },
+      "rdock.ClusterLimits": {
+        "additionalProperties": false,
+        "description": "Shared budgets for `rate_limit` and `quota` with `scope: cluster` (ADR-0031).\n\nEach instance claims a part of each key's budget from the store ahead of use and admits\nrequests against what it claimed, so the request path never waits on the store. The\ncluster admits at most `L + N × max(c, ⌈L / N⌉)` per key and window, where `L` is the\nlimit, `N` the number of instances, `c = max(1, ⌈L × headroom_percent / (100 × N)⌉)` the\nheadroom an instance may use beyond its claims, and `⌈L / N⌉` what an instance admits for a\nkey new to it until its first claim returns.",
+        "properties": {
+          "fallback": {
+            "$ref": "#/components/schemas/rdock.LimitFallback",
+            "default": "share",
+            "description": "`share` (default) or `instance`: what an instance enforces while the store is away."
+          },
+          "headroom_percent": {
+            "default": 10,
+            "description": "How far an instance may admit beyond the budget it has claimed, as a percentage of the\nlimit split between the instances: larger values absorb store latency at high request\nrates, smaller ones tighten the bound. Default 10 (0–100).",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "redis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.RedisStore"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The Redis-compatible server, for `store: redis`."
+          },
+          "store": {
+            "$ref": "#/components/schemas/rdock.LimitStoreType",
+            "default": "cluster",
+            "description": "`cluster` (default) or `redis`."
+          },
+          "sync_interval": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "1s",
+            "description": "How often claims, membership and recovery are attended to (claims a request needs are\nsent at once). Default 1s (100ms–10s)."
+          }
+        },
+        "type": "object"
+      },
+      "rdock.ClusterStore": {
+        "additionalProperties": false,
+        "description": "Where a cluster shares certificates, the ACME account, leases and challenge answers.",
+        "properties": {
+          "barrier_timeout": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "10s",
+            "description": "How long the instance that orders a certificate waits for every live member to hold an\nHTTP-01 or TLS-ALPN-01 answer before the CA is told to validate. Members that have not\nconfirmed by then cannot answer; validation goes ahead. Default 10s (1s–2m)."
+          },
+          "lease_ttl": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "1m",
+            "description": "How long a lease on a certificate name lasts unless its holder renews it (every third of\nit). Default 60s (10s–10m)."
+          },
+          "path": {
+            "description": "The shared directory, for `type: directory`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": {
+            "$ref": "#/components/schemas/rdock.ClusterStoreType",
+            "default": "control",
+            "description": "`control` (default) or `directory`."
+          }
+        },
+        "type": "object"
+      },
+      "rdock.ClusterStoreType": {
+        "description": "The kinds of cluster store.",
+        "oneOf": [
+          {
+            "const": "control",
+            "description": "The control plane serves the store to enrolled members over mutual TLS. Leases carry a\nfencing token the control plane checks on every write.",
+            "type": "string"
+          },
+          {
+            "const": "directory",
+            "description": "A directory every instance mounts (NFS, EFS, a shared volume). Best effort: lock files\nwith an expiry that depends on the instances' clocks, and no enforced fencing.",
+            "type": "string"
+          }
+        ]
+      },
       "rdock.CompressAlgorithm": {
         "description": "Compression algorithms.",
         "oneOf": [
@@ -2227,12 +3011,34 @@
             "description": "Certificates you provide yourself.",
             "type": "object"
           },
+          "cluster": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.Cluster"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Membership of a cluster (H-HA-01…03): the control plane this data plane takes its\nconfiguration from, and where certificates are shared."
+          },
           "consumers": {
             "additionalProperties": {
               "$ref": "#/components/schemas/rdock.Consumer"
             },
             "description": "API clients and users that requests are attributed to, with their API keys (stored\nhashed). The `api` provider may add consumers and keys (`rdock consumers`).",
             "type": "object"
+          },
+          "control": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ControlPlane"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The control plane's own settings, read only by `rdock control run`."
           },
           "defaults": {
             "$ref": "#/components/schemas/rdock.Defaults",
@@ -2245,6 +3051,17 @@
               "tls": "auto"
             },
             "description": "Defaults applied to routes that do not set a value."
+          },
+          "geoip": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.GeoIp"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "GeoIP databases for `ClientCountry`, `ClientContinent` and `ClientASN` (H-SEC-04). No\ndatabase is bundled or downloaded."
           },
           "lifecycle": {
             "$ref": "#/components/schemas/rdock.Lifecycle",
@@ -2260,6 +3077,17 @@
             "default": {},
             "description": "Sockets to accept traffic on. When empty, `web` (`:80`) and `websecure` (`:443`, TLS)\nare used.",
             "type": "object"
+          },
+          "locality": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.Locality"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The proxy's own zone and whether services prefer backends in it (H-HA-05)."
           },
           "middlewares": {
             "additionalProperties": {
@@ -2317,6 +3145,17 @@
             "description": "HTTP routes: which requests go to which service, through which middlewares.",
             "type": "object"
           },
+          "runtime": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.RuntimeSettings"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The proxy's worker threads; read at start, so a change needs a restart."
+          },
           "secrets": {
             "$ref": "#/components/schemas/rdock.Secrets",
             "description": "External secret stores that secret fields can reference (`${vault:…}`)."
@@ -2361,6 +3200,13 @@
             "description": "TCP backend pools.",
             "type": "object"
           },
+          "tenants": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/rdock.Tenant"
+            },
+            "description": "Tenants of the admin API (H-SEC-07): API tokens and users scoped to a tenant read and\nwrite only the API objects under its name prefix, whose routes stay inside its host\nclaims. Without this section, nothing is scoped.",
+            "type": "object"
+          },
           "udp_routes": {
             "additionalProperties": {
               "$ref": "#/components/schemas/rdock.UdpRoute"
@@ -2376,6 +3222,17 @@
             "default": {},
             "description": "UDP backend pools.",
             "type": "object"
+          },
+          "upgrade": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.Upgrade"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "In-place binary upgrades (`rdock upgrade`, `SIGUSR2`): the binary, the drain bound and\nthe start timeout."
           },
           "version": {
             "default": null,
@@ -2415,6 +3272,64 @@
               "string",
               "null"
             ]
+          }
+        },
+        "type": "object"
+      },
+      "rdock.ControlPlane": {
+        "additionalProperties": false,
+        "description": "The control-plane side of a cluster, read by `rdock control run` (never by `rdock run`).",
+        "properties": {
+          "history": {
+            "default": 50,
+            "description": "Published revisions kept for listing and rollback. Default 50 (1–1000).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "identity_lifetime": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "30d",
+            "description": "Lifetime of the client certificate each data plane receives; it is renewed when a third\nis left. A data plane whose certificate expires while the control plane is away keeps\nserving but must enrol again with a new token. Default 30d (1h–90d)."
+          },
+          "join_token_ttl": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "1h",
+            "description": "How long a join token from `rdock control token create` stays usable. Default 1h\n(1m–30d)."
+          },
+          "listener": {
+            "$ref": "#/components/schemas/rdock.ListenAddress",
+            "default": "127.0.0.1:7443",
+            "description": "The cluster listener data planes connect to (mutual TLS, HTTP/2). Default\n`127.0.0.1:7443`: set an address other machines reach."
+          },
+          "name": {
+            "description": "A display name for the cluster.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "names": {
+            "description": "DNS names and IP addresses on the control plane's server certificate, as data planes\nwrite them in `cluster.control.url`. `localhost`, `127.0.0.1`, `::1` and the listener's\nIP are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "offline_after": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "1m30s",
+            "description": "A data plane that has not asked for a bundle for this long is shown as offline and is\nnot chosen as a canary. Default 90s (10s–1h)."
+          },
+          "rollout": {
+            "$ref": "#/components/schemas/rdock.Rollout",
+            "default": {
+              "auto_rollback": false,
+              "canary_timeout": "2m",
+              "mode": "canary",
+              "soak": "1m"
+            },
+            "description": "How a published revision reaches the data planes: one canary first, then the rest."
           }
         },
         "type": "object"
@@ -2819,6 +3734,20 @@
         },
         "type": "object"
       },
+      "rdock.DrainLimit": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/rdock.Duration"
+          },
+          {
+            "enum": [
+              "unlimited"
+            ],
+            "type": "string"
+          }
+        ],
+        "description": "A duration, or `unlimited`."
+      },
       "rdock.Duration": {
         "description": "Duration made of numbers with units: ms, s, m, h, d.",
         "examples": [
@@ -2922,6 +3851,65 @@
         ],
         "type": "object"
       },
+      "rdock.Factor": {
+        "description": "A number with up to three decimals, such as 1.4.",
+        "examples": [
+          1.4
+        ],
+        "minimum": 0,
+        "type": "number"
+      },
+      "rdock.Failover": {
+        "description": "How traffic moves between backend priority tiers.",
+        "oneOf": [
+          {
+            "const": "strict",
+            "description": "The next tier only when every tier above has no available backend.",
+            "type": "string"
+          },
+          {
+            "const": "spill",
+            "description": "Tiers share traffic by their health and the overprovisioning factor.",
+            "type": "string"
+          }
+        ]
+      },
+      "rdock.FailurePercentageDetector": {
+        "additionalProperties": false,
+        "description": "The failure-percentage detector, with Envoy's defaults.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "enabled": {
+            "default": false,
+            "description": "Turns the detector on. Default `false`.",
+            "type": "boolean"
+          },
+          "minimum_hosts": {
+            "default": 5,
+            "description": "Backends with enough requests needed before anything is evaluated. Default 5; at\nleast 3.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "request_volume": {
+            "default": 50,
+            "description": "Requests in the interval for a backend to count. Default 50.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "threshold": {
+            "default": 85,
+            "description": "Failure share that ejects, in percent. Default 85.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "rdock.FileProvider": {
         "additionalProperties": false,
         "description": "File provider.",
@@ -2945,6 +3933,84 @@
         "required": [
           "paths"
         ],
+        "type": "object"
+      },
+      "rdock.FloodLimit": {
+        "description": "A number, or `unlimited` to remove the limit.",
+        "oneOf": [
+          {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          {
+            "enum": [
+              "unlimited"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "rdock.GeoIp": {
+        "additionalProperties": false,
+        "description": "GeoIP databases in the MaxMind DB format (H-SEC-04, ADR-0031): MaxMind GeoLite2 or GeoIP2,\nDB-IP Lite or IPinfo Lite files that you download and keep current. The files are read into\nmemory and read again when they change.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "asn_database": {
+            "description": "An ASN database (`.mmdb`, e.g. GeoLite2-ASN) for `ClientASN`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "database": {
+            "description": "A country database (`.mmdb`): gives `ClientCountry` and `ClientContinent`. A file that\nalso carries ASNs (IPinfo Lite) gives `ClientASN` as well.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "log": {
+            "$ref": "#/components/schemas/rdock.GeoIpLog",
+            "default": {
+              "asn": false,
+              "country": false
+            },
+            "description": "Opt-in access-log fields; both off by default, since a location tied to an IP address\nis personal data in many jurisdictions."
+          },
+          "max_age": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "30d",
+            "description": "The oldest database build accepted, by the build time in its metadata. Default 30 days:\nthe GeoLite End User License Agreement (updated 2026-02-12) requires deleting a\nversion within thirty days of a newer release."
+          },
+          "on_stale": {
+            "$ref": "#/components/schemas/rdock.OnStale",
+            "default": "warn",
+            "description": "What an older database does: `warn` (the default) logs a warning and keeps using it;\n`refuse` refuses to load it, so the configuration that needs it is refused."
+          }
+        },
+        "type": "object"
+      },
+      "rdock.GeoIpLog": {
+        "additionalProperties": false,
+        "description": "GeoIP fields in the access log.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "asn": {
+            "default": false,
+            "description": "Log `asn`.",
+            "type": "boolean"
+          },
+          "country": {
+            "default": false,
+            "description": "Log `country` (ISO 3166-1 alpha-2).",
+            "type": "boolean"
+          }
+        },
         "type": "object"
       },
       "rdock.GoogleCloudDnsProvider": {
@@ -3060,14 +4126,14 @@
           "slow_start": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/rdock.Duration"
+                "$ref": "#/components/schemas/rdock.SlowStart"
               },
               {
                 "type": "null"
               }
             ],
             "default": null,
-            "description": "A backend that becomes healthy ramps up its weight over this time."
+            "description": "A backend that becomes healthy again ramps up its weight: a duration such as `30s`, or\n`{ window, aggression, min_weight_percent, on }`. Not with hash policies."
           },
           "when_all_down": {
             "$ref": "#/components/schemas/rdock.WhenAllDown",
@@ -3111,6 +4177,36 @@
             "type": "string"
           }
         ]
+      },
+      "rdock.Hedge": {
+        "additionalProperties": false,
+        "description": "Hedged requests (planned).",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "delay": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.Duration"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Time without a response after which the hedge would be sent."
+          },
+          "max_attempts": {
+            "description": "Attempts in flight at most, the first included.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
       },
       "rdock.HetznerProvider": {
         "additionalProperties": false,
@@ -3190,6 +4286,46 @@
           "max_age"
         ],
         "type": "object"
+      },
+      "rdock.Http3Congestion": {
+        "description": "QUIC congestion controllers (quinn 0.11).",
+        "oneOf": [
+          {
+            "const": "cubic",
+            "description": "CUBIC (RFC 9438).",
+            "type": "string"
+          },
+          {
+            "const": "newreno",
+            "description": "`NewReno` (RFC 9002 §7).",
+            "type": "string"
+          },
+          {
+            "const": "bbr",
+            "description": "BBR; quinn marks its implementation experimental.",
+            "type": "string"
+          }
+        ]
+      },
+      "rdock.Http3Retry": {
+        "description": "When an HTTP/3 listener sends QUIC Retry packets.",
+        "oneOf": [
+          {
+            "const": "auto",
+            "description": "While 100 or more connections are half-open.",
+            "type": "string"
+          },
+          {
+            "const": "always",
+            "description": "For every new connection without a valid token.",
+            "type": "string"
+          },
+          {
+            "const": "never",
+            "description": "Not proactively; Retry is still sent when the listener is full, when the client is at\nits limit, or once half-open connections reach half of `max_connections`.",
+            "type": "string"
+          }
+        ]
       },
       "rdock.HttpUrl": {
         "examples": [
@@ -3522,6 +4658,21 @@
           }
         ]
       },
+      "rdock.LatencyMeasure": {
+        "description": "What a `peak_ewma` latency sample measures.",
+        "oneOf": [
+          {
+            "const": "first_byte",
+            "description": "Time to the response headers (NGINX `least_time header`): a long download or a slow\nclient does not make a backend look slow.",
+            "type": "string"
+          },
+          {
+            "const": "last_byte",
+            "description": "Time to the end of the response (NGINX `last_byte`). Upgraded connections (WebSocket)\ngive no sample.",
+            "type": "string"
+          }
+        ]
+      },
       "rdock.LatencyRule": {
         "additionalProperties": false,
         "description": "A p99 latency threshold.",
@@ -3590,6 +4741,11 @@
             "const": "cookie_hash",
             "description": "Consistent hash of a cookie (`hash_on`).",
             "type": "string"
+          },
+          {
+            "const": "peak_ewma",
+            "description": "Power of two distinct random choices over `latency × (in_flight + 1) / weight`, with a\nlatency average that reacts to peaks at once (Finagle's and Linkerd's Peak-EWMA).",
+            "type": "string"
           }
         ]
       },
@@ -3608,6 +4764,21 @@
         },
         "type": "object"
       },
+      "rdock.LimitFallback": {
+        "description": "What an instance enforces while the limit store cannot be reached.",
+        "oneOf": [
+          {
+            "const": "share",
+            "description": "Its share: the limit divided by the number of instances it last knew of, against what\nit admitted itself in the window. The cluster stays near the limit under even load.",
+            "type": "string"
+          },
+          {
+            "const": "instance",
+            "description": "The whole limit on its own, as with `scope: instance` (N instances admit up to N times\nthe limit).",
+            "type": "string"
+          }
+        ]
+      },
       "rdock.LimitHeaders": {
         "description": "Rate-limit response headers.",
         "oneOf": [
@@ -3619,6 +4790,36 @@
           {
             "const": "draft",
             "description": "`RateLimit-Policy` and `RateLimit` as in `draft-ietf-httpapi-ratelimit-headers-11`.",
+            "type": "string"
+          }
+        ]
+      },
+      "rdock.LimitScope": {
+        "description": "Where a limit is counted (ADR-0031).",
+        "oneOf": [
+          {
+            "const": "instance",
+            "description": "Each instance counts on its own: N instances admit up to N times the limit.",
+            "type": "string"
+          },
+          {
+            "const": "cluster",
+            "description": "The instances of a cluster share the limit through `cluster.limits` (the cluster store\nor Redis), within a documented bound; each falls back to its share when the store is\naway. Without a cluster it counts per instance.",
+            "type": "string"
+          }
+        ]
+      },
+      "rdock.LimitStoreType": {
+        "description": "Where cluster-scoped limits keep their shared counters.",
+        "oneOf": [
+          {
+            "const": "cluster",
+            "description": "The cluster store (`cluster.store`: the control plane or the shared directory).",
+            "type": "string"
+          },
+          {
+            "const": "redis",
+            "description": "A Redis-compatible server (`redis`).",
             "type": "string"
           }
         ]
@@ -3700,6 +4901,28 @@
             "$ref": "#/components/schemas/rdock.ListenAddress",
             "description": "Address to bind, e.g. `:443` or `127.0.0.1:8080`."
           },
+          "http2": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ListenerHttp2"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "HTTP/2 settings of `http` (h2c) and `https` listeners (H-PERF-03, ADR-0031). Unset\nvalues keep the behaviour before v0.9."
+          },
+          "http3": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ListenerHttp3"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "HTTP/3 over QUIC on the same address, `https` listeners only (experimental, ADR-0032):\nthe listener then also owns the UDP socket of its address. Needs a build with the\n`http3` cargo feature; off by default."
+          },
           "ping": {
             "default": null,
             "description": "A path answered `200 OK` for any host before routing, for load-balancer health\nmonitors such as Cloudflare Load Balancing, e.g. `/rdock/ping`.",
@@ -3743,6 +4966,17 @@
             ],
             "description": "`udp` listeners: how many sessions (client address and port, each with its own\nupstream socket) may exist at once. Capped by default even when omitted."
           },
+          "socket": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ListenerSocket"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Options of the listening socket and of the connections it accepts (ADR-0031). Unset\noptions keep the kernel's behaviour, except `backlog`, which defaults to 4096."
+          },
           "starttls": {
             "anyOf": [
               {
@@ -3783,6 +5017,240 @@
         ],
         "type": "object"
       },
+      "rdock.ListenerHttp2": {
+        "additionalProperties": false,
+        "description": "HTTP/2 settings of a listener (RFC 9113 §6.5.2). Unset values keep what Pingora 0.9.1 and\nh2 0.4.20 do; the limits that protect against stream and reset floods can only be removed\nby writing `unlimited`.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "initial_connection_window": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ByteSize"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Flow-control window of the whole connection. Default 65535 bytes; 65535 to 2^31-1."
+          },
+          "initial_stream_window": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ByteSize"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Flow-control window of each stream (`SETTINGS_INITIAL_WINDOW_SIZE`): how much request\nbody a client may send before rdock reads it. Default 65535 bytes (the protocol's\ninitial value); at most 2^31-1."
+          },
+          "max_concurrent_streams": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.FloodLimit"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Streams a client may have open at once (`SETTINGS_MAX_CONCURRENT_STREAMS`). Default 100\n(Pingora's bound); at most 10000 unless `unlimited`."
+          },
+          "max_frame_size": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ByteSize"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Largest frame payload rdock accepts (`SETTINGS_MAX_FRAME_SIZE`). Default 16384; 16384\nto 16777215 (RFC 9113 §6.5.2)."
+          },
+          "max_header_list_size": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ByteSize"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Largest decoded request header list (`SETTINGS_MAX_HEADER_LIST_SIZE`). Default 64KiB\n(Pingora's bound); 1KiB to 16MiB."
+          },
+          "max_local_error_reset_streams": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.FloodLimit"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Streams rdock resets because the client misbehaved before the connection is closed (the\n`MadeYouReset` mitigation, CVE-2025-8671). Default 1024 (h2's); at most 100000 unless\n`unlimited`."
+          },
+          "max_pending_accept_reset_streams": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.FloodLimit"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Streams a client may reset before rdock accepted them, at once (the HTTP/2 Rapid Reset\nmitigation, CVE-2023-44487). Default 20 (h2's); at most 10000 unless `unlimited`."
+          },
+          "max_send_buffer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ByteSize"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Response data buffered per stream for a client that reads slowly. Default 400KiB (h2's);\n16KiB to 16MiB."
+          }
+        },
+        "type": "object"
+      },
+      "rdock.ListenerHttp3": {
+        "additionalProperties": false,
+        "description": "HTTP/3 settings of an `https` listener (experimental, ADR-0032). Every limit is bounded;\nnothing is unlimited.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "advertise": {
+            "default": true,
+            "description": "Add `Alt-Svc: h3=\":<port>\"` to this listener's HTTP/1 and HTTP/2 responses while the\nQUIC endpoint serves (RFC 9114 §3.1.1). Default `true`.",
+            "type": "boolean"
+          },
+          "advertise_max_age": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "1h",
+            "description": "How long clients may remember the advertisement (`ma`). Default 1h (RFC 7838's default\nis 24h; shorter while experimental); 1s to 30d."
+          },
+          "advertise_port": {
+            "description": "The UDP port to advertise when it differs from the listener's (a port mapping such as\npublic 443 to container 8443). Default: the listener's port.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "client_ipv6_prefix": {
+            "default": 64,
+            "description": "The IPv6 prefix length that counts as one client for `max_connections_per_client`.\nDefault 64 (one subscriber's network, RFC 6177); 32 to 128.",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "congestion": {
+            "$ref": "#/components/schemas/rdock.Http3Congestion",
+            "default": "cubic",
+            "description": "Congestion controller. Default `cubic`."
+          },
+          "datagrams": {
+            "default": false,
+            "description": "HTTP/3 datagrams (RFC 9297). Not supported (planned).",
+            "type": "boolean"
+          },
+          "early_data": {
+            "default": false,
+            "description": "Accept 0-RTT early data. Not supported (planned): early data can be replayed.",
+            "type": "boolean"
+          },
+          "enabled": {
+            "default": false,
+            "description": "Serve HTTP/3 on the UDP port of the listener's address. Default `false`.",
+            "type": "boolean"
+          },
+          "extended_connect": {
+            "default": false,
+            "description": "Extended CONNECT (RFC 9220 WebSocket over HTTP/3, RFC 9298 CONNECT-UDP). Not supported\n(planned).",
+            "type": "boolean"
+          },
+          "gso": {
+            "default": true,
+            "description": "UDP generic segmentation offload where the kernel supports it. Default `true`.",
+            "type": "boolean"
+          },
+          "max_concurrent_streams": {
+            "default": 100,
+            "description": "Request streams a client may have open at once per connection\n(`initial_max_streams_bidi`). Default 100; 1 to 10000.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_connections": {
+            "default": 1000,
+            "description": "QUIC connections the listener holds at once. Default 1000; 1 to 1000000. Worst-case\nmemory is `max_connections × (2 × receive_window + send_window)`: about 3 GiB with the\ndefaults; validation warns above 4 GiB.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_connections_per_client": {
+            "default": 100,
+            "description": "QUIC connections one client holds at once. A client is one IPv4 address, or one IPv6\nprefix of `client_ipv6_prefix` bits. Only connections whose address is validated count.\nDefault 100; 1 to `max_connections`.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_header_size": {
+            "$ref": "#/components/schemas/rdock.ByteSize",
+            "default": "64KiB",
+            "description": "Largest request header section (`SETTINGS_MAX_FIELD_SECTION_SIZE`, counted as RFC 9114\n§4.2.2 does: name + value + 32 bytes per field). Default 64KiB; 1KiB to 768KiB, and at\nmost `receive_window`."
+          },
+          "max_idle": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "30s",
+            "description": "Close a connection with no activity for this long (QUIC `max_idle_timeout`). Default\n30s (HAProxy's); 1s to 10m."
+          },
+          "migration": {
+            "default": false,
+            "description": "Let clients move a connection to another address (active migration). Not supported\n(planned). With migration off, quinn 0.11 drops packets from a new address, so a client\nwhose NAT rebinds loses the connection and reconnects.",
+            "type": "boolean"
+          },
+          "qlog": {
+            "description": "Write qlog traces into this directory. Not supported in this version (planned).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "receive_window": {
+            "$ref": "#/components/schemas/rdock.ByteSize",
+            "default": "1MiB",
+            "description": "Data a client may send on the whole connection before rdock reads it (QUIC\n`initial_max_data`). rdock also holds at most this much of incomplete HEADERS and other\nnon-DATA frames per connection. Default 1MiB; 64KiB to 64MiB."
+          },
+          "retry": {
+            "$ref": "#/components/schemas/rdock.Http3Retry",
+            "default": "auto",
+            "description": "When to make clients prove their address with a QUIC Retry before any handshake work\n(RFC 9000 §8.1.2). `auto` (default) sends Retry while 100 or more connections are\nhalf-open (HAProxy's `tune.quic.retry-threshold`); `always`; `never` drops that\nthreshold only. Whatever the setting, a client whose address is not yet validated is\nsent Retry instead of being refused when the listener is full, when its address already\nholds `max_connections_per_client` connections or handshakes, and once half-open\nconnections reach half of `max_connections`: spoofed packets can neither lock a client\nout nor fill the listener."
+          },
+          "send_window": {
+            "$ref": "#/components/schemas/rdock.ByteSize",
+            "default": "1MiB",
+            "description": "Response data rdock buffers per connection for a client that has not acknowledged it\nyet. Default 1MiB; 64KiB to 64MiB."
+          },
+          "stream_receive_window": {
+            "$ref": "#/components/schemas/rdock.ByteSize",
+            "default": "512KiB",
+            "description": "Request body a client may send on one stream before rdock reads it (QUIC\n`initial_max_stream_data_bidi_remote`). Default 512KiB; 16KiB to 16MiB, and at most\n`receive_window`."
+          },
+          "webtransport": {
+            "default": false,
+            "description": "WebTransport over HTTP/3. Not supported (planned).",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "rdock.ListenerProtocol": {
         "description": "Listener protocols.",
         "oneOf": [
@@ -3807,6 +5275,100 @@
             "type": "string"
           }
         ]
+      },
+      "rdock.ListenerSocket": {
+        "additionalProperties": false,
+        "description": "Socket options of a listener. Options that do not apply to the listener's transport are\nrefused, and so are options this platform cannot set.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "backlog": {
+            "description": "TCP: how many connections the kernel holds that have completed their handshake and\nthat ReverseDock has not accepted yet. Default 4096, Linux's `net.core.somaxconn`\ndefault since 5.4, which also caps it (before v0.9 it was 128).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "dscp": {
+            "description": "DSCP value (0–63) of the traffic sent on accepted connections (the top six bits of\nIPv4's TOS byte or IPv6's traffic class).",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "fast_open": {
+            "description": "TCP: accept TCP Fast Open with this many pending requests (`TCP_FASTOPEN`). The kernel\nmust allow it for servers (`net.ipv4.tcp_fastopen` bit 2). Linux only; off by default.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ipv6_only": {
+            "description": "`IPV6_V6ONLY` for an IPv6 or all-interfaces (`:port`) address: `true` serves IPv6 only,\n`false` IPv6 and IPv4. Unset: the system's default (`net.ipv6.bindv6only`).",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "keepalive": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.TcpKeepalive"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "TCP keep-alive probes on accepted connections. Unset: off, as the kernel does."
+          },
+          "receive_buffer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ByteSize"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`SO_RCVBUF`: the receive buffer, set before `listen` so the TCP window scale is\nnegotiated with it. Unset: the kernel's automatic sizing."
+          },
+          "reuse_port": {
+            "default": false,
+            "description": "TCP: `SO_REUSEPORT`, so several sockets (or processes) can bind the same address and\nthe kernel spreads connections over them. Off by default: with it, another process of\nthe same user can bind the address unnoticed. Refused on `udp` listeners.",
+            "type": "boolean"
+          },
+          "send_buffer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ByteSize"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`SO_SNDBUF`: the send buffer. Unset: the kernel's automatic sizing."
+          },
+          "user_timeout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.Duration"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "TCP: `TCP_USER_TIMEOUT` on accepted connections, how long sent data may stay\nunacknowledged before the connection is dropped. Linux only."
+          }
+        },
+        "type": "object"
       },
       "rdock.ListenerTimeouts": {
         "additionalProperties": false,
@@ -3864,10 +5426,52 @@
             "default": null,
             "description": "Client certificates (mTLS). A certificate is always verified against these roots."
           },
+          "fingerprint": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.TlsFingerprint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "TLS client fingerprints (H-SEC-03): JA4, and JA3 on request, computed from each\nconnection's ClientHello. Unset (the default), no ClientHello is read for it and\n`ClientFingerprint`, the `ja4` keys and the access-log fields stay empty."
+          },
+          "max_handshakes": {
+            "description": "`https` listeners: TLS handshakes in progress at once. While the bound is reached, new\nconnections wait in the listen backlog instead of taking CPU from established ones.\nUnset: no bound (ADR-0031).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "policy": {
             "$ref": "#/components/schemas/rdock.TlsPolicy",
             "default": "intermediate",
             "description": "TLS versions and cipher suites."
+          },
+          "session_cache": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.TlsSessionCache"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Sessions kept in memory for resumption by session ID (TLS 1.2, and TLS 1.3 when\ntickets are off), shared like the ticket keys. Default 256 sessions."
+          },
+          "tickets": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.TlsTickets"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Session tickets (stateless resumption, H-PERF-02). On by default, with keys shared by\nevery listener of the same security class and kept across reloads and binary upgrades."
           }
         },
         "type": "object"
@@ -3879,6 +5483,17 @@
           "^x-": {}
         },
         "properties": {
+          "decay": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.Duration"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`peak_ewma`: time constant of the latency average. Default 10s (Finagle's and\nLinkerd's `decay`)."
+          },
           "hash_on": {
             "default": null,
             "description": "Header or cookie name for `header_hash` and `cookie_hash`.",
@@ -3887,6 +5502,17 @@
               "null"
             ]
           },
+          "measure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.LatencyMeasure"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`peak_ewma`: what a latency sample measures. Default `first_byte`."
+          },
           "policy": {
             "$ref": "#/components/schemas/rdock.LbPolicy",
             "default": "round_robin",
@@ -3894,6 +5520,43 @@
           }
         },
         "type": "object"
+      },
+      "rdock.Locality": {
+        "additionalProperties": false,
+        "description": "The proxy's zone and the default locality preference of services (H-HA-05, ADR-0031).",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/rdock.LocalityMode",
+            "default": "off",
+            "description": "`prefer`: services use only backends of this zone while at least one of them is\navailable, and every backend otherwise (Kubernetes `PreferSameZone`). `off` (the\ndefault, as Kubernetes distributes traffic evenly by default) ignores zones. A\nservice's own `locality.mode` overrides this."
+          },
+          "zone": {
+            "description": "The zone this proxy runs in, e.g. `eu-west-1a`. When omitted, the `RDOCK_ZONE`\nenvironment variable gives it; with neither, `prefer` has no effect.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "rdock.LocalityMode": {
+        "description": "Whether backends in the proxy's zone are preferred.",
+        "oneOf": [
+          {
+            "const": "off",
+            "description": "Every available backend, whatever its zone.",
+            "type": "string"
+          },
+          {
+            "const": "prefer",
+            "description": "Only backends in the proxy's zone while at least one of them is available; all\notherwise (Kubernetes `PreferSameZone`).",
+            "type": "string"
+          }
+        ]
       },
       "rdock.LogFormat": {
         "description": "Access log formats.",
@@ -4519,13 +6182,17 @@
                 "additionalProperties": {
                   "$ref": "#/components/schemas/rdock.RateOverride"
                 },
-                "description": "Group → limit for consumers in that group, with `key: consumer`. The first of the\nconsumer's groups (in its `groups` order) that has an override wins.",
+                "description": "Group → limit for consumers in that group, with `key: consumer` or `key: group`. With\n`consumer`, the first of the consumer's groups (in its `groups` order) that has an\noverride wins; with `group`, the override of the primary group (the first one) applies.",
                 "type": "object"
               },
               "period": {
                 "$ref": "#/components/schemas/rdock.Duration",
                 "default": "1s",
                 "description": "Period of `average`."
+              },
+              "scope": {
+                "$ref": "#/components/schemas/rdock.LimitScope",
+                "description": "`instance` (default) or `cluster`. With `cluster`, the cluster admits at most\n`average` requests per key in each `period` (fixed windows from the Unix epoch), within\nthe bound of `cluster.limits`; each instance's own token bucket still shapes bursts."
               },
               "type": {
                 "const": "rate_limit",
@@ -4567,6 +6234,10 @@
                 "$ref": "#/components/schemas/rdock.Duration",
                 "default": "5s",
                 "description": "How long a queued request waits before it gets `429`."
+              },
+              "scope": {
+                "$ref": "#/components/schemas/rdock.LimitScope",
+                "description": "Only `instance`: a cluster-wide count of requests in flight is planned."
               },
               "type": {
                 "const": "in_flight",
@@ -4941,6 +6612,13 @@
                 },
                 "description": "Where the token is read from; `Authorization: Bearer` when empty."
               },
+              "trusted_groups": {
+                "description": "Groups from `groups_claim` that count for `key: group` and for group `overrides` of\n`rate_limit` and `quota`, as if configured. Other token groups are kept on the\nconsumer (metering, headers) but never share a configured group's budget or override,\nand a consumer with only those is counted on its own.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
               "type": {
                 "const": "jwt",
                 "type": "string"
@@ -4967,7 +6645,21 @@
             "properties": {
               "allow": {
                 "default": [],
-                "description": "Names a certificate must have one of: its common name or a DNS, URI or email SAN.\n`*` matches any run of characters, e.g. `*.clients.example.com`. Any name when empty.",
+                "description": "Names a certificate must have one of: its common name or a DNS, URI or email SAN.\n`*` matches any run of characters, e.g. `*.clients.example.com`. Any name when empty.\nThe typed lists below check one field each and are safer: a URI pattern there cannot\nbe satisfied by a common name that carries the same text.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "dns": {
+                "description": "DNS SANs, one must match (`*` globs).",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "emails": {
+                "description": "Email SANs, one must match (`*` globs).",
                 "items": {
                   "type": "string"
                 },
@@ -4978,14 +6670,60 @@
                 "default": "none",
                 "description": "Headers that pass the identity to the backend."
               },
+              "organizations": {
+                "description": "Subject organizations (O), one must match (`*` globs).",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
               "required": {
                 "default": true,
                 "description": "Answer `403` to requests without a verified client certificate.",
                 "type": "boolean"
               },
+              "serials": {
+                "description": "Certificate serial numbers in hex (`0a1b…`, colons allowed), exact.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "sha256": {
+                "description": "SHA-256 fingerprints of the certificate in hex (colons allowed), exact: pins.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "spiffe": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/rdock.SpiffeRules"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "SPIFFE X.509-SVID rules (H-SEC-05): the certificate must be a valid SVID of one of the\ntrust domains, and its ID one of `ids` or under one of `id_prefixes`."
+              },
+              "subjects": {
+                "description": "Subject common names, one must match (`*` globs). Every typed list that is set must\nmatch, together with `allow`.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
               "type": {
                 "const": "client_cert",
                 "type": "string"
+              },
+              "uris": {
+                "description": "URI SANs, one must match (`*` globs).",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
               }
             },
             "required": [
@@ -5690,7 +7428,7 @@
               "key": {
                 "$ref": "#/components/schemas/rdock.RateLimitKey",
                 "default": "consumer",
-                "description": "What to count by; only `consumer` (the default) is accepted. Requests without a\nconsumer are counted per client IP."
+                "description": "What to count by: `consumer` (the default) or `group` (the consumer's primary group,\nthe first of its `groups`: all consumers of a group share one count). Requests without\na consumer are counted per client IP."
               },
               "limit": {
                 "description": "Requests allowed per window.",
@@ -5704,8 +7442,12 @@
                   "minimum": 0,
                   "type": "integer"
                 },
-                "description": "Group → limit, for consumers in that group (the first of the consumer's groups that has\none wins).",
+                "description": "Group → limit, for consumers in that group (with `key: consumer`, the first of the\nconsumer's groups that has one wins; with `key: group`, the primary group's).",
                 "type": "object"
+              },
+              "scope": {
+                "$ref": "#/components/schemas/rdock.LimitScope",
+                "description": "`instance` (default) or `cluster`: with `cluster`, the instances of a cluster share each\nkey's quota through `cluster.limits`, within its documented bound."
               },
               "type": {
                 "const": "quota",
@@ -6012,6 +7754,236 @@
               "session"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Count abuse signals (response statuses, failed authentications) per key in a window\nand ban keys past a threshold for a while (H-SEC-01). Per instance; bans survive\nrestarts and binary upgrades.",
+            "patternProperties": {
+              "^x-": {}
+            },
+            "properties": {
+              "action": {
+                "$ref": "#/components/schemas/rdock.AbuseAction",
+                "default": "deny",
+                "description": "What a banned key gets: `deny` (`403`, problem type `banned`, the default), `tarpit`\n(held for `tarpit.delay`, then denied) or `tag` (served; the access log and later\nmiddlewares see `abuse: tagged`)."
+              },
+              "ban": {
+                "$ref": "#/components/schemas/rdock.Duration",
+                "default": "10m",
+                "description": "How long a ban lasts. Default 10m."
+              },
+              "events": {
+                "default": [
+                  401,
+                  403
+                ],
+                "description": "What counts: status codes (`401`), classes (`4xx`) and `auth_failure` (an\nauthentication middleware refused the credentials). Default `[401, 403]`.",
+                "items": {
+                  "$ref": "#/components/schemas/rdock.AbuseEvent"
+                },
+                "type": "array"
+              },
+              "exempt": {
+                "default": [
+                  "127.0.0.0/8",
+                  "::1/128"
+                ],
+                "description": "Client networks never counted or banned. Default the loopback networks; the\n`security.trusted_proxies` networks are always added, so a proxy whose clients are not\nresolved can never ban itself, and with it everyone behind it.",
+                "items": {
+                  "$ref": "#/components/schemas/rdock.IpNetwork"
+                },
+                "type": "array"
+              },
+              "key": {
+                "$ref": "#/components/schemas/rdock.AbuseKey",
+                "default": "client_ip",
+                "description": "What to count by: `client_ip` (the default; IPv6 by /64), `consumer`, `ja4` or\n`header:<Name>`. Requests without a consumer or fingerprint count by client address."
+              },
+              "max_bans": {
+                "default": 10000,
+                "description": "Bans at once. The ban list is separate from the counters and nothing evicts a ban\nbefore it ends: when it is full, new bans are refused and counted in\n`rdock_abuse_bans_refused_total`. Default 10000.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "max_keys": {
+                "default": 100000,
+                "description": "Keys counted at once; past it, the oldest counters are dropped. Default 100000.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "tarpit": {
+                "$ref": "#/components/schemas/rdock.Tarpit",
+                "default": {
+                  "delay": "5s",
+                  "max_held": 100
+                },
+                "description": "`action: tarpit`."
+              },
+              "threshold": {
+                "default": 20,
+                "description": "Events within one `window` that start a ban. Default 20.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": {
+                "const": "abuse",
+                "type": "string"
+              },
+              "window": {
+                "$ref": "#/components/schemas/rdock.Duration",
+                "default": "1m",
+                "description": "The counting window. Default 1m."
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "An adaptive concurrency limit (H-LB-04, ADR-0031): it learns how many requests the\nroutes using it can have in flight from their latency (`aimd` or `gradient`) and\nanswers the rest with `503` and `Retry-After`, routes of the lowest `priority_class`\nfirst. Off unless configured.",
+            "properties": {
+              "backoff_percent": {
+                "description": "`aimd` only: the limit is multiplied by this percentage on a drop (default 90, 50–99).",
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "initial": {
+                "description": "The limit at start and after a reload (default 20, Netflix's, kept within `min`–`max`).",
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "interval": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/rdock.Duration"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "`gradient` only: time between two measurements of the no-load latency (default 60s,\nthe `min_rtt_calc_params.interval` of Envoy's documented example; 1s–1h)."
+              },
+              "jitter_percent": {
+                "description": "`gradient` only: a random part of `interval` added to it, in percent, so instances do\nnot measure at the same moment (default 15, Envoy's `jitter`; 0–100).",
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "latency": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/rdock.Duration"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "`aimd` only: a sample slower than this counts as a drop (default 5s, Netflix's\n`timeout`). Measured from admission to the response headers."
+              },
+              "max": {
+                "default": 1000,
+                "description": "The highest limit (default 1000, Envoy's `max_concurrency_limit`).",
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "min": {
+                "default": 3,
+                "description": "The lowest limit (default 3, Envoy's `min_concurrency`).",
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "mode": {
+                "$ref": "#/components/schemas/rdock.AdmissionMode",
+                "description": "`aimd` or `gradient`."
+              },
+              "probe": {
+                "description": "`gradient` only: samples at `min` concurrency that make one measurement of the no-load\nlatency (default 50, Envoy's `request_count`; 5–1000).",
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "probe_timeout": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/rdock.Duration"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "`gradient` only: the longest a measurement pins the limit to `min` (default 5s;\n100ms–60s). When it ends early, the median of the samples it has becomes the\nreference; without any, the previous reference stays."
+              },
+              "queue": {
+                "description": "`gradient` only: requests allowed above the estimate (default 4, Netflix's\n`queueSize`).",
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "retry_after": {
+                "$ref": "#/components/schemas/rdock.Duration",
+                "default": "1s",
+                "description": "`Retry-After` of a shed request (default 1s)."
+              },
+              "shares": {
+                "$ref": "#/components/schemas/rdock.AdmissionShares",
+                "default": {
+                  "normal": 90,
+                  "sheddable": 75
+                },
+                "description": "The share of the limit `normal` and `sheddable` routes may fill, in percent."
+              },
+              "smoothing_percent": {
+                "description": "`gradient` only: the weight of a new estimate, in percent (default 20, 1–100).",
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "tolerance_percent": {
+                "description": "`gradient` only: how much slower than the no-load latency a sample may be before the\nlimit shrinks, in percent (default 150, Netflix's `rttTolerance` 1.5; 100–1000).",
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "type": {
+                "const": "admission",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "mode"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -6258,6 +8230,58 @@
           }
         ]
       },
+      "rdock.OnStale": {
+        "description": "What a GeoIP database older than `max_age` does.",
+        "oneOf": [
+          {
+            "const": "warn",
+            "description": "Log a warning and keep using it.",
+            "type": "string"
+          },
+          {
+            "const": "refuse",
+            "description": "Refuse to load it.",
+            "type": "string"
+          }
+        ]
+      },
+      "rdock.OutlierDetection": {
+        "additionalProperties": false,
+        "description": "Outlier detectors (Envoy's outlier detection). Failures are those of passive health:\nconnection errors, resets, timeouts and `statuses`.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "failure_percentage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.FailurePercentageDetector"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Ejects a backend whose failures reach `threshold` percent of its requests."
+          },
+          "interval": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "10s",
+            "description": "How often the detectors look at the counts of the last interval. Default 10s (Envoy)."
+          },
+          "success_rate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.SuccessRateDetector"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Ejects a backend whose success rate is below `mean − stdev_factor × σ` of the others."
+          }
+        },
+        "type": "object"
+      },
       "rdock.PassiveHealth": {
         "additionalProperties": false,
         "description": "Ejection of backends that keep failing.",
@@ -6269,6 +8293,11 @@
             "$ref": "#/components/schemas/rdock.Duration",
             "default": "30s",
             "description": "How long an ejected backend stays out before one request tries it again; doubled for\neach ejection in a row, up to 5 minutes."
+          },
+          "ejection_jitter": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "0s",
+            "description": "Up to this much is added at random to each ejection time, so backends ejected by many\ninstances do not all return at once (Envoy's `max_ejection_time_jitter`). Default 0s."
           },
           "failures": {
             "default": 5,
@@ -6283,6 +8312,17 @@
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
+          },
+          "outlier": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.OutlierDetection"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Statistical detectors that compare backends with each other once per interval and eject\nthe outliers through the same ejection as `failures` (back-off, `max_ejection_percent`,\ntrial request)."
           },
           "statuses": {
             "default": [
@@ -6466,6 +8506,26 @@
         ],
         "type": "object"
       },
+      "rdock.PriorityClass": {
+        "description": "A route's class for load shedding by `admission` (H-LB-04).",
+        "oneOf": [
+          {
+            "const": "critical",
+            "description": "Shed last: may fill the whole limit.",
+            "type": "string"
+          },
+          {
+            "const": "normal",
+            "description": "The default: may fill `shares.normal` of the limit.",
+            "type": "string"
+          },
+          {
+            "const": "sheddable",
+            "description": "Shed first: may fill `shares.sheddable` of the limit.",
+            "type": "string"
+          }
+        ]
+      },
       "rdock.Providers": {
         "additionalProperties": false,
         "description": "Configuration sources besides this file.",
@@ -6636,7 +8696,7 @@
           "client_ip",
           "header:X-Api-Key"
         ],
-        "pattern": "^(client_ip|route|consumer|(header|cookie|claim):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$",
+        "pattern": "^(client_ip|route|consumer|group|ja4|(header|cookie|claim):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$",
         "type": "string"
       },
       "rdock.RateOverride": {
@@ -6714,6 +8774,56 @@
           }
         ]
       },
+      "rdock.RedisStore": {
+        "additionalProperties": false,
+        "description": "A Redis-compatible server (Redis, Valkey, …) for cluster-scoped limits. rdock uses\n`INCRBY`, `DECRBY`, `PEXPIREAT`, `ZADD`, `ZREMRANGEBYSCORE`, `ZCARD`, `TIME` (membership is\njudged by the server's clock; without it, by each instance's), `AUTH`, `SELECT` and\n`PING`.",
+        "properties": {
+          "allow_plaintext": {
+            "default": false,
+            "description": "Allow `redis://` (no TLS) to an address that is not a loopback address. Off by default:\nthe password and the counters would cross the network in clear.",
+            "type": "boolean"
+          },
+          "ca_file": {
+            "description": "CA certificates (PEM) to verify the server with instead of the system's roots.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key_prefix": {
+            "default": "rdock:",
+            "description": "Prefix of every key rdock writes. Default `rdock:`.",
+            "type": "string"
+          },
+          "password": {
+            "description": "The password. A secret: reference a file or a variable, e.g.\n`\"${file:/run/secrets/redis}\"`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timeout": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "1s",
+            "description": "The longest a connection or a command may take before the store counts as away.\nDefault 1s (100ms–10s)."
+          },
+          "url": {
+            "description": "`rediss://host:6379/0` (TLS) or `redis://host:6379/0`; the path is the database\nnumber. Plain `redis://` is accepted for loopback addresses only, unless\n`allow_plaintext` is set. Credentials belong in `username` and `password`, not here.",
+            "type": "string"
+          },
+          "username": {
+            "description": "The ACL user name (Redis 6 and later); without it `AUTH` sends only the password.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      },
       "rdock.RequestDirectives": {
         "description": "The client's request directives.",
         "oneOf": [
@@ -6779,6 +8889,17 @@
               "$ref": "#/components/schemas/rdock.RetryOn"
             },
             "type": "array"
+          },
+          "per_try_timeout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.Duration"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Abandons an attempt that has not finished a read for this long and retries it on\nanother backend, within the budget and only where a retry is allowed (`on` must list\n`timeout`). It replaces `timeouts.read` for every read of such an attempt, the wait for\nthe response headers and each pause of the response body; the last attempt and\nrequests that cannot be retried wait `timeouts.read`."
           },
           "retry_non_idempotent": {
             "default": false,
@@ -6879,6 +9000,55 @@
         ],
         "type": "object"
       },
+      "rdock.Rollout": {
+        "additionalProperties": false,
+        "description": "Staged rollout of published revisions (H-HA-02, ADR-0031).",
+        "properties": {
+          "auto_rollback": {
+            "default": false,
+            "description": "Rolling back automatically when the canary's health drops: planned, only `false` is\naccepted.",
+            "type": "boolean"
+          },
+          "canary": {
+            "description": "The instance that takes each revision first. When it is offline or not set, the first\nonline instance by name is chosen.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "canary_timeout": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "2m",
+            "description": "How long the canary has to report on a revision; without a report by then the rollout\nhalts. Default 2m (10s–1h)."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/rdock.RolloutMode",
+            "default": "canary",
+            "description": "`canary` (default) or `all`. The first revision of a cluster and rollbacks (including\nan abandoned rollout) always go to every instance at once."
+          },
+          "soak": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "1m",
+            "description": "How long the canary serves a revision it acknowledged before the rest take it. Default\n60s (0s–24h)."
+          }
+        },
+        "type": "object"
+      },
+      "rdock.RolloutMode": {
+        "description": "How a revision is rolled out.",
+        "oneOf": [
+          {
+            "const": "canary",
+            "description": "One canary takes the revision first; the rest follow after `soak` once it acknowledged\nit. A refusal (NACK) by any instance halts the rollout.",
+            "type": "string"
+          },
+          {
+            "const": "all",
+            "description": "Every connected data plane takes the revision at once.",
+            "type": "string"
+          }
+        ]
+      },
       "rdock.Route": {
         "additionalProperties": false,
         "description": "An HTTP route: which requests it matches, which middlewares run, which service answers.",
@@ -6954,6 +9124,10 @@
             "description": "Higher priorities are evaluated first. `0` uses the rule length, like Traefik.",
             "format": "int64",
             "type": "integer"
+          },
+          "priority_class": {
+            "$ref": "#/components/schemas/rdock.PriorityClass",
+            "description": "Which requests an `admission` middleware sheds first under overload: `sheddable`,\nthen `normal` (the default), `critical` last. Unrelated to `priority`, which orders\nmatching."
           },
           "service": {
             "default": null,
@@ -7146,6 +9320,36 @@
         },
         "type": "object"
       },
+      "rdock.RuntimeSettings": {
+        "additionalProperties": false,
+        "description": "The proxy's async runtime (ADR-0031). Read at start: a change takes effect after a restart.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "max_blocking_threads": {
+            "description": "Most threads for blocking work (file reads, DNS lookups by the system resolver).\nUnset: 512, tokio's default.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "worker_threads": {
+            "description": "Threads that serve connections. Unset: one per CPU the process may use, tokio's\ndefault.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "rdock.SameSite": {
         "description": "`SameSite` cookie attribute.",
         "oneOf": [
@@ -7182,6 +9386,11 @@
           {
             "const": "h2c",
             "description": "HTTP/2 in cleartext (gRPC without TLS).",
+            "type": "string"
+          },
+          {
+            "const": "h3",
+            "description": "HTTP/3 over QUIC. Not supported in this version (planned, ADR-0032): Pingora 0.9 has no\nQUIC connector.",
             "type": "string"
           }
         ]
@@ -7254,6 +9463,11 @@
             },
             "type": "array"
           },
+          "failover": {
+            "$ref": "#/components/schemas/rdock.Failover",
+            "default": "strict",
+            "description": "How traffic moves between backend `priority` tiers. `strict` (the default): a tier gets\ntraffic only when every tier above it has no available backend. `spill`: a tier keeps\n`healthy share × overprovisioning` of the traffic (at most all of it) and the rest goes\nto the next tier, as Envoy's priority levels do."
+          },
           "health": {
             "anyOf": [
               {
@@ -7266,6 +9480,17 @@
             "default": null,
             "description": "Active and passive health checks."
           },
+          "hedge": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.Hedge"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Hedged requests: a second attempt while the first is still waiting. Planned, not\nsupported: Pingora 0.9 cannot race two upstream attempts of one request. Use\n`retries.per_try_timeout` for stalled attempts."
+          },
           "load_balancer": {
             "$ref": "#/components/schemas/rdock.LoadBalancer",
             "default": {
@@ -7273,6 +9498,17 @@
               "policy": "round_robin"
             },
             "description": "How a backend is chosen for each request."
+          },
+          "locality": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ServiceLocality"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Prefer backends in the proxy's own zone (`locality` at the top level sets the zone).\nOmitted, the top-level `locality.mode` applies."
           },
           "max_connections_per_backend": {
             "default": null,
@@ -7293,6 +9529,17 @@
               "integer",
               "null"
             ]
+          },
+          "overprovisioning": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.Factor"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "With `failover: spill`: how much more than its share each tier can carry. Default 1.4\n(Envoy's `overprovisioning_factor`): a tier keeps all traffic until fewer than about\n71 % of its backends are available."
           },
           "pass_host_header": {
             "default": true,
@@ -7373,6 +9620,23 @@
         },
         "type": "object"
       },
+      "rdock.ServiceLocality": {
+        "additionalProperties": false,
+        "description": "The locality preference of one service.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/rdock.LocalityMode",
+            "description": "`prefer` or `off`."
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "type": "object"
+      },
       "rdock.SessionLimit": {
         "description": "A number of sessions (at least 1), or `unlimited`.",
         "oneOf": [
@@ -7404,6 +9668,69 @@
           }
         ]
       },
+      "rdock.SlowStart": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/rdock.Duration"
+          },
+          {
+            "$ref": "#/components/schemas/rdock.SlowStartConfig"
+          }
+        ],
+        "description": "Time to full weight, such as `30s`, or every setting."
+      },
+      "rdock.SlowStartConfig": {
+        "additionalProperties": false,
+        "description": "Slow start, every setting (Envoy's `SlowStartConfig`): the weight is\n`weight × max(min_weight_percent / 100, (elapsed / window)^(1 / aggression))`.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "aggression": {
+            "$ref": "#/components/schemas/rdock.Factor",
+            "default": 1,
+            "description": "Shape of the ramp: 1.0 (the default) is linear; above 1 ramps faster at first."
+          },
+          "min_weight_percent": {
+            "default": 10,
+            "description": "The weight starts at this share, in percent. Default 10 (Envoy).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "on": {
+            "default": [
+              "recovery"
+            ],
+            "description": "When a backend ramps: `recovery` (after failed probes or an ejection; the default) and\n`join` (a backend that newly appears in a pool that already had a backend at full\nweight; never at start-up or into an empty pool).",
+            "items": {
+              "$ref": "#/components/schemas/rdock.SlowStartOn"
+            },
+            "type": "array"
+          },
+          "window": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "30s",
+            "description": "Time to full weight."
+          }
+        },
+        "type": "object"
+      },
+      "rdock.SlowStartOn": {
+        "description": "When a backend's weight ramps up.",
+        "oneOf": [
+          {
+            "const": "recovery",
+            "description": "After recovering from failed probes or an ejection.",
+            "type": "string"
+          },
+          {
+            "const": "join",
+            "description": "When it newly appears in a pool that already had a backend at full weight.",
+            "type": "string"
+          }
+        ]
+      },
       "rdock.SmtpTls": {
         "description": "How the SMTP connection is protected.",
         "oneOf": [
@@ -7423,6 +9750,43 @@
             "type": "string"
           }
         ]
+      },
+      "rdock.SpiffeRules": {
+        "additionalProperties": false,
+        "description": "SPIFFE X.509-SVID checks on a client certificate (SPIFFE standards `X509-SVID.md` and\n`SPIFFE-ID.md`, commit 5d15e3ee of github.com/spiffe/spiffe, 2026-11-13): exactly one URI\nSAN, scheme `spiffe`, a valid trust domain and a non-root path, a leaf that is not a CA and\nmay not sign certificates or CRLs. The chain itself is verified by the listener's\n`client_auth`, whose CA bundle must be the trust domain's.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "consumer": {
+            "default": false,
+            "description": "Make the SPIFFE ID the request's consumer (for `rate_limit` and `quota` by consumer,\nmetering and the access log). Its issuer is `spiffe://<trust domain>`, so it never\nshares counters with an API-key or token consumer of the same name. Off by default.",
+            "type": "boolean"
+          },
+          "id_prefixes": {
+            "description": "SPIFFE ID prefixes, matched segment by segment: `spiffe://prod.example.com/ns/web`\naccepts that ID and every ID below it, never `/ns/webshop`. With neither `ids` nor\n`id_prefixes`, any ID of the trust domains is accepted.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "ids": {
+            "description": "SPIFFE IDs accepted exactly, e.g. `spiffe://prod.example.com/ns/web/sa/api`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "trust_domains": {
+            "default": [],
+            "description": "Trust domains accepted, e.g. `prod.example.com`. Required.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
       },
       "rdock.SplitTarget": {
         "additionalProperties": false,
@@ -7628,6 +9992,40 @@
         },
         "type": "object"
       },
+      "rdock.SuccessRateDetector": {
+        "additionalProperties": false,
+        "description": "The success-rate detector, with Envoy's defaults.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "enabled": {
+            "default": false,
+            "description": "Turns the detector on. Default `false`.",
+            "type": "boolean"
+          },
+          "minimum_hosts": {
+            "default": 5,
+            "description": "Backends with enough requests needed before anything is evaluated. Default 5; at\nleast 3.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "request_volume": {
+            "default": 100,
+            "description": "Requests in the interval for a backend to count. Default 100.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "stdev_factor": {
+            "$ref": "#/components/schemas/rdock.Factor",
+            "default": 1.9,
+            "description": "Multiplier of the standard deviation. Default 1.9 (Envoy's 1900 / 1000)."
+          }
+        },
+        "type": "object"
+      },
       "rdock.SwarmEndpointMode": {
         "description": "How Swarm services are reached.",
         "oneOf": [
@@ -7733,6 +10131,69 @@
             "type": "string"
           }
         ]
+      },
+      "rdock.Tarpit": {
+        "additionalProperties": false,
+        "description": "How `action: tarpit` holds requests.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "delay": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "5s",
+            "description": "How long a request is held before the `403`. Default 5s, at most 60s."
+          },
+          "max_held": {
+            "default": 100,
+            "description": "Requests held at once, all keys together; past it, banned requests are denied at once\n(holding connections costs the proxy too: HAProxy's manual warns that a tarpit \"can\nmake things worse\"). Default 100.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "rdock.TcpKeepalive": {
+        "additionalProperties": false,
+        "description": "TCP keep-alive on accepted connections (`SO_KEEPALIVE`). Unset values keep the kernel's\n(Linux: 7200 s idle, 75 s between probes, 9 probes).",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "count": {
+            "description": "Unanswered probes before the connection is dropped (`TCP_KEEPCNT`).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "idle": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.Duration"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Idle time before the first probe (`TCP_KEEPIDLE`)."
+          },
+          "interval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.Duration"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Time between probes (`TCP_KEEPINTVL`)."
+          }
+        },
+        "type": "object"
       },
       "rdock.TcpRoute": {
         "additionalProperties": false,
@@ -7874,6 +10335,140 @@
         },
         "type": "object"
       },
+      "rdock.Tenant": {
+        "additionalProperties": false,
+        "description": "One tenant.",
+        "properties": {
+          "allow_critical": {
+            "description": "Let the tenant's routes use `priority_class: critical` with an `admission` middleware\nit does not own (a shared one). Off: critical traffic on a shared limit is the\nadministrator's to define.",
+            "type": "boolean"
+          },
+          "backend_networks": {
+            "description": "Networks the tenant's backends may connect to. Empty: globally routable unicast\naddresses only (no loopback, link-local, private, unique-local, shared, multicast,\ndocumentation, reserved or cloud metadata address), checked on IP literals at\nvalidation and on every address a DNS name or SRV record resolves to, each time it\nresolves. Set: exactly these networks (a cloud metadata address only when listed on\nits own), and backends must be IP literals.",
+            "items": {
+              "$ref": "#/components/schemas/rdock.IpNetwork"
+            },
+            "type": "array"
+          },
+          "certificates": {
+            "description": "Planned: certificates the tenant owns.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "dashboard": {
+            "description": "Planned: a dashboard view limited to the tenant.",
+            "type": "boolean"
+          },
+          "hosts": {
+            "default": [],
+            "description": "The host names the tenant's routes may match: `shop.example.com` or\n`*.shop.example.com` (any name below it, not the name itself). Claims of two tenants\nmay not overlap.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/rdock.TenantLimits",
+            "description": "Ceilings on what the tenant's objects may hold, so one tenant cannot use up what\ntenants share (disk, the ACME account's rate limits)."
+          },
+          "listeners": {
+            "description": "Planned: listeners the tenant owns.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "metrics_label": {
+            "description": "Planned: a `tenant` label on the core metrics.",
+            "type": "boolean"
+          },
+          "prefix": {
+            "description": "The start of the names of the tenant's objects in the admin API (routes, services,\nmiddlewares). Defaults to `<tenant>-`. No tenant's prefix may start another's.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "shared": {
+            "$ref": "#/components/schemas/rdock.TenantShared",
+            "description": "Objects outside the prefix that the tenant's objects may reference (`name` for the\nconfiguration file's, `name@provider` for a provider's)."
+          }
+        },
+        "type": "object"
+      },
+      "rdock.TenantLimits": {
+        "additionalProperties": false,
+        "description": "Ceilings on a tenant's objects. The defaults are small on purpose; an administrator raises\nthem per tenant.",
+        "properties": {
+          "max_body": {
+            "$ref": "#/components/schemas/rdock.ByteSize",
+            "default": "16MiB",
+            "description": "The largest request body a tenant route accepts, and the most its `hold_body`,\n`transform` and `validate` middlewares may hold (default 16MiB). A tenant route without\n`max_body` gets this one, or `security.limits.max_body_bytes` when that is smaller."
+          },
+          "max_middlewares": {
+            "default": 100,
+            "description": "Middlewares the tenant may have (default 100).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_routes": {
+            "default": 100,
+            "description": "Routes the tenant may have (default 100).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_services": {
+            "default": 100,
+            "description": "Services the tenant may have (default 100).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_tls_names": {
+            "default": 20,
+            "description": "Distinct host names the tenant's routes may get automatic certificates for (default\n20): each one is an order on the ACME account every tenant shares, and Let's Encrypt\nlimits certificates per registered domain and orders per account.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "rdock.TenantShared": {
+        "additionalProperties": false,
+        "description": "Objects outside a tenant's prefix that its objects may reference.",
+        "properties": {
+          "caches": {
+            "default": [],
+            "description": "Cache stores (`caches`), for `cache` middlewares.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "middlewares": {
+            "default": [],
+            "description": "Middlewares.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "services": {
+            "default": [],
+            "description": "Services.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
       "rdock.Timeouts": {
         "additionalProperties": false,
         "description": "Upstream timeouts.",
@@ -7909,6 +10504,40 @@
         },
         "type": "object"
       },
+      "rdock.TlsFingerprint": {
+        "additionalProperties": false,
+        "description": "Which TLS client fingerprints an `https` listener computes, and whether backends see them.\nThe values are computed from the outer ClientHello (with Encrypted Client Hello the inner\none is never seen), only for connections this listener terminates.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "header": {
+            "description": "A request header that carries the JA4 value to the backend, e.g. `X-JA4`. A copy sent\nby the client is always removed. Unset (the default): backends do not see it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ja3": {
+            "default": false,
+            "description": "JA3 (Salesforce, an MD5 of the ClientHello). Off by default: legacy, since Chrome 110\nrandomises the extension order that JA3 hashes, one browser has many JA3 values.",
+            "type": "boolean"
+          },
+          "ja3_header": {
+            "description": "A request header that carries the JA3 value (needs `ja3: true`).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ja4": {
+            "default": true,
+            "description": "JA4 (FoxIO, BSD 3-Clause). Default on when `fingerprint` is set.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "rdock.TlsMode": {
         "description": "`auto` issues certificates automatically; `off` serves the route without TLS.",
         "oneOf": [
@@ -7938,6 +10567,50 @@
             "type": "string"
           }
         ]
+      },
+      "rdock.TlsSessionCache": {
+        "additionalProperties": false,
+        "description": "The in-memory session cache of a TLS listener.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "size": {
+            "default": 256,
+            "description": "Sessions kept (0 turns the cache off). Default 256, rustls's default.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "rdock.TlsTickets": {
+        "additionalProperties": false,
+        "description": "TLS session tickets. A ticket lets a returning client skip the full handshake. Listeners\nshare ticket keys only when their TLS policy, client authentication (mode and CA\ncertificates), certificate scope and these settings are equal, so a session from a listener\nwithout client authentication can never be resumed on one that requires it. 0-RTT (early\ndata) is never accepted.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "enabled": {
+            "default": true,
+            "description": "Issue and accept tickets.",
+            "type": "boolean"
+          },
+          "key_file": {
+            "description": "Keys you provide, to share tickets between instances: one or more 32-byte keys in base64,\none per line (`openssl rand -base64 32`), the first current, the others still accepted.\nThe file must not be readable by the group or others, is read again when it changes, and\nrotating it is then your job (a warning when it is older than 24 hours). Without it, keys\nare generated, live in memory only and are handed to the next process in a binary\nupgrade.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rotate": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "6h",
+            "description": "How often a new ticket key is made; the previous key still decrypts for one more\ninterval, so tickets live at most twice this (announced to clients, capped at 7 days by\nRFC 8446 §4.6.1). Default 6h, rustls's own default; at most 84h."
+          }
+        },
+        "type": "object"
       },
       "rdock.TokenEndpointAuth": {
         "description": "Token endpoint client authentication (OpenID Connect Core §9).",
@@ -8425,6 +11098,38 @@
           }
         ]
       },
+      "rdock.Upgrade": {
+        "additionalProperties": false,
+        "description": "In-place binary upgrades (H-PERF-04, ADR-0031): `rdock upgrade` on the admin Unix socket or\n`SIGUSR2` hands the listeners to a new process, which serves once it is ready; this one\ndrains and exits. Linux only; refused when rdock is PID 1 (replace the container instead).",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "binary": {
+            "default": "/usr/local/bin/rdock",
+            "description": "The binary `SIGUSR2` and `rdock upgrade` without `--binary` run. Default\n`/usr/local/bin/rdock`, where the systemd unit and the release image install it. It\nmust be a regular file owned by root or rdock's user and not writable by the group or\nothers, in a directory with the same owners that the group and others cannot write to\n(unless it is sticky, like /tmp).",
+            "type": "string"
+          },
+          "drain": {
+            "$ref": "#/components/schemas/rdock.DrainLimit",
+            "default": "10m",
+            "description": "How long the old process may still serve its open connections (HTTP/1 keep-alive is\nswitched off and HTTP/2 clients get GOAWAY at once); the rest are closed then. Default\n10m (Envoy's drain time); `unlimited` waits for every connection, which keeps an old,\npossibly vulnerable binary serving for as long as a client holds a connection."
+          },
+          "start_timeout": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "30s",
+            "description": "How long the new process may take to report that it is ready, and then that it serves;\notherwise the old process resumes and the upgrade fails. Default 30s."
+          },
+          "trusted_keys": {
+            "description": "minisign public keys (`RWQ…`); when set, `<binary>.minisig` must be a valid signature of\nthe binary by one of them.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
       "rdock.UpstreamTls": {
         "additionalProperties": false,
         "description": "TLS to backends.",
@@ -8701,9 +11406,117 @@
         ]
       }
     },
+    "/api/v1/abuse/bans": {
+      "get": {
+        "description": "The keys banned on this instance now.",
+        "operationId": "list_bans",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "`bans`: middleware, key, since and until (RFC 3339), remaining_seconds"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "security": [
+          {
+            "token": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "The keys banned on this instance now",
+        "tags": [
+          "security"
+        ]
+      }
+    },
+    "/api/v1/abuse/bans/{key}": {
+      "delete": {
+        "description": "(operator): lifts the ban of `key` (as listed, e.g. `ip:192.0.2.7` or `ip:2001:db8:1:2::/64`) in every `abuse` middleware, or in `?middleware=` only. Audited. `404` when no such ban exists.",
+        "operationId": "remove_ban",
+        "parameters": [
+          {
+            "description": "The banned key, URL-encoded",
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only this `abuse` middleware's ban; every middleware's when omitted.",
+            "in": "query",
+            "name": "middleware",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "`removed`: how many bans were lifted"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "No such ban"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "security": [
+          {
+            "token": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "(operator): lifts the ban of `key` (as listed, e.g",
+        "tags": [
+          "security"
+        ]
+      }
+    },
     "/api/v1/audit": {
       "get": {
-        "description": "Recent audit records, newest first. Admins only.",
+        "description": "Recent audit records, newest first. Admins only; a tenant-scoped admin gets its tenant's records only.",
         "operationId": "audit",
         "parameters": [
           {
@@ -9801,6 +12614,477 @@
         "summary": "Renew the automatic certificate covering `name` now (operator role)",
         "tags": [
           "certificates"
+        ]
+      }
+    },
+    "/api/v1/cluster/instances": {
+      "get": {
+        "description": "Every enrolled data plane with its state (`synced`, `behind`, `error`, `offline`, `revoked`), the revision it serves and is given, its version, identity expiry and last error; and the rollout.",
+        "operationId": "list_cluster_instances",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterInstances"
+                }
+              }
+            },
+            "description": "The instances and the rollout"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not a control plane"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "security": [
+          {
+            "token": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Every enrolled data plane with its state (`synced`, `behind`, `error`, `offline`, `revoked`), the revision it serves and is given, its version, identity expiry and last error; and the rollout",
+        "tags": [
+          "cluster"
+        ]
+      }
+    },
+    "/api/v1/cluster/instances/{name}/revoke": {
+      "post": {
+        "description": "(operator): the instance can no longer fetch bundles or use the store; it keeps serving its last bundle. Audited.",
+        "operationId": "revoke_cluster_instance",
+        "parameters": [
+          {
+            "description": "The instance's name",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "`revoked`: the name"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such instance, or not a control plane"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "security": [
+          {
+            "token": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "(operator): the instance can no longer fetch bundles or use the store; it keeps serving its last bundle",
+        "tags": [
+          "cluster"
+        ]
+      }
+    },
+    "/api/v1/cluster/revisions": {
+      "get": {
+        "description": "Published revisions, newest first, with the instances that refused each and why.",
+        "operationId": "list_cluster_revisions",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterRevisions"
+                }
+              }
+            },
+            "description": "Revisions and the rollout"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not a control plane"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "security": [
+          {
+            "token": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Published revisions, newest first, with the instances that refused each and why",
+        "tags": [
+          "cluster"
+        ]
+      },
+      "post": {
+        "description": "(operator): validates and publishes `document` as the next revision, or publishes `rollback_to`'s document again as a new revision. Data planes pull it. Audited.",
+        "operationId": "publish_cluster_revision",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClusterPublishRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "`revision`, `sha256`, `published_at`, `rollback_of`, `warnings`"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Neither or both of `document` and `rollback_to`, or an unknown revision"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not a control plane"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The document does not validate or is empty: `diagnostics`"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "security": [
+          {
+            "token": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "(operator): validates and publishes `document` as the next revision, or publishes `rollback_to`'s document again as a new revision",
+        "tags": [
+          "cluster"
+        ]
+      }
+    },
+    "/api/v1/cluster/rollout": {
+      "get": {
+        "description": "The rollout of the newest revision.",
+        "operationId": "get_cluster_rollout",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterRollout"
+                }
+              }
+            },
+            "description": "The rollout"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not a control plane"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "security": [
+          {
+            "token": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "The rollout of the newest revision",
+        "tags": [
+          "cluster"
+        ]
+      }
+    },
+    "/api/v1/cluster/rollout/abandon": {
+      "post": {
+        "description": "(operator): the stable revision's document is published again as a new revision, which every instance takes at once; instances already given the abandoned revision are sent back. Audited.",
+        "operationId": "abandon_cluster_rollout",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The rollback: `revision`, `sha256`, `published_at`, `rollback_of`"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not a control plane"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Nothing to abandon, or no complete revision to return to"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "security": [
+          {
+            "token": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "(operator): the stable revision's document is published again as a new revision, which every instance takes at once; instances already given the abandoned revision are sent back",
+        "tags": [
+          "cluster"
+        ]
+      }
+    },
+    "/api/v1/cluster/rollout/resume": {
+      "post": {
+        "description": "(operator): a halted (or still soaking) rollout goes on: every instance is given the revision now. Audited.",
+        "operationId": "resume_cluster_rollout",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterRollout"
+                }
+              }
+            },
+            "description": "The rollout, now complete"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not a control plane"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Nothing to resume (the rollout is complete)"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "security": [
+          {
+            "token": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "(operator): a halted (or still soaking) rollout goes on: every instance is given the revision now",
+        "tags": [
+          "cluster"
+        ]
+      }
+    },
+    "/api/v1/cluster/tokens": {
+      "post": {
+        "description": "(operator): a single-use join token, shown once, and the cluster CA's pin for `cluster.control.ca_pin`. Audited (the token's id, never its value).",
+        "operationId": "create_join_token",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JoinTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "`token` (shown once), `id`, `expires_at`, `ca_pin`, `cluster_id`"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A lifetime out of range"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not a control plane"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "security": [
+          {
+            "token": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "(operator): a single-use join token, shown once, and the cluster CA's pin for `cluster.control.ca_pin`",
+        "tags": [
+          "cluster"
         ]
       }
     },
@@ -11694,7 +14978,7 @@
     },
     "/api/v1/tokens": {
       "get": {
-        "description": "The caller's tokens, or everyone's for an admin.",
+        "description": "The caller's tokens, or everyone's for an admin (a tenant-scoped admin: its tenant's).",
         "operationId": "tokens",
         "responses": {
           "200": {
@@ -11728,7 +15012,7 @@
             "session": []
           }
         ],
-        "summary": "The caller's tokens, or everyone's for an admin",
+        "summary": "The caller's tokens, or everyone's for an admin (a tenant-scoped admin: its tenant's)",
         "tags": [
           "tokens"
         ]
@@ -11841,6 +15125,83 @@
         "summary": "Revokes one of the caller's tokens, or anyone's for an admin",
         "tags": [
           "tokens"
+        ]
+      }
+    },
+    "/api/v1/upgrade": {
+      "post": {
+        "description": "Replaces the running binary without dropping connections: the listeners are handed to a new process, which serves once it is ready; this one drains (ADR-0031). Only on the admin Unix socket (operator role), never over TCP: it runs a file. Returns when the new process serves or the attempt was rolled back.",
+        "operationId": "upgrade",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpgradeBody"
+              }
+            }
+          },
+          "description": "The binary to run (optional)",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The new process serves; this one drains"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not over the Unix socket, or the role cannot"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Refused; nothing changed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Failed and rolled back; this process serves on"
+          }
+        },
+        "security": [
+          {
+            "token": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Replaces the running binary without dropping connections: the listeners are handed to a new process, which serves once it is ready; this one drains (ADR-0031)",
+        "tags": [
+          "status"
         ]
       }
     },

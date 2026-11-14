@@ -80,12 +80,34 @@
       },
       "default": {}
     },
+    "cluster": {
+      "description": "Membership of a cluster (H-HA-01…03): the control plane this data plane takes its\nconfiguration from, and where certificates are shared.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Cluster"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "consumers": {
       "description": "API clients and users that requests are attributed to, with their API keys (stored\nhashed). The `api` provider may add consumers and keys (`rdock consumers`).",
       "type": "object",
       "additionalProperties": {
         "$ref": "#/$defs/Consumer"
       }
+    },
+    "control": {
+      "description": "The control plane's own settings, read only by `rdock control run`.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ControlPlane"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "defaults": {
       "description": "Defaults applied to routes that do not set a value.",
@@ -98,6 +120,17 @@
         "redirect_http_to_https": true,
         "tls": "auto"
       }
+    },
+    "geoip": {
+      "description": "GeoIP databases for `ClientCountry`, `ClientContinent` and `ClientASN` (H-SEC-04). No\ndatabase is bundled or downloaded.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/GeoIp"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "lifecycle": {
       "description": "Start-up and shutdown behaviour.",
@@ -113,6 +146,17 @@
         "$ref": "#/$defs/Listener"
       },
       "default": {}
+    },
+    "locality": {
+      "description": "The proxy's own zone and whether services prefer backends in it (H-HA-05).",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Locality"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "middlewares": {
       "description": "Reusable request and response policies.",
@@ -170,6 +214,17 @@
       },
       "default": {}
     },
+    "runtime": {
+      "description": "The proxy's worker threads; read at start, so a change needs a restart.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RuntimeSettings"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "secrets": {
       "description": "External secret stores that secret fields can reference (`${vault:…}`).",
       "$ref": "#/$defs/Secrets"
@@ -214,6 +269,13 @@
       },
       "default": {}
     },
+    "tenants": {
+      "description": "Tenants of the admin API (H-SEC-07): API tokens and users scoped to a tenant read and\nwrite only the API objects under its name prefix, whose routes stay inside its host\nclaims. Without this section, nothing is scoped.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/Tenant"
+      }
+    },
     "udp_routes": {
       "description": "UDP routes: which `udp` listener's datagrams go to which UDP service.",
       "type": "object",
@@ -229,6 +291,17 @@
         "$ref": "#/$defs/UdpService"
       },
       "default": {}
+    },
+    "upgrade": {
+      "description": "In-place binary upgrades (`rdock upgrade`, `SIGUSR2`): the binary, the drain bound and\nthe start timeout.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Upgrade"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "version": {
       "description": "Configuration format version. Only `1` exists; omit it to use the latest.",
@@ -246,6 +319,52 @@
     "^x-": {}
   },
   "$defs": {
+    "AbuseAction": {
+      "description": "What a banned key gets.",
+      "oneOf": [
+        {
+          "description": "`403` with the problem type `banned`.",
+          "type": "string",
+          "const": "deny"
+        },
+        {
+          "description": "Held for `tarpit.delay`, then `403`.",
+          "type": "string",
+          "const": "tarpit"
+        },
+        {
+          "description": "Served; marked in the access log and for later middlewares.",
+          "type": "string",
+          "const": "tag"
+        }
+      ]
+    },
+    "AbuseEvent": {
+      "examples": [
+        401,
+        "4xx",
+        "auth_failure"
+      ],
+      "oneOf": [
+        {
+          "type": "integer",
+          "maximum": 599,
+          "minimum": 400
+        },
+        {
+          "type": "string",
+          "pattern": "^([45]xx|auth_failure|[45][0-9][0-9])$"
+        }
+      ]
+    },
+    "AbuseKey": {
+      "type": "string",
+      "examples": [
+        "client_ip",
+        "ja4"
+      ],
+      "pattern": "^(client_ip|consumer|ja4|header:[A-Za-z0-9!#$%&'*+.^_`|~-]+)$"
+    },
     "AccessLog": {
       "description": "Access log settings.",
       "type": "object",
@@ -746,6 +865,42 @@
           "format": "uint16",
           "default": 90,
           "maximum": 65535,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "AdmissionMode": {
+      "description": "How `admission` adapts its limit.",
+      "oneOf": [
+        {
+          "description": "Additive increase, multiplicative decrease on slow or failed samples.",
+          "type": "string",
+          "const": "aimd"
+        },
+        {
+          "description": "The measured no-load latency against each sample's (Envoy's gradient).",
+          "type": "string",
+          "const": "gradient"
+        }
+      ]
+    },
+    "AdmissionShares": {
+      "description": "How much of the limit each lower priority class may fill.",
+      "type": "object",
+      "properties": {
+        "normal": {
+          "description": "Routes with `priority_class: normal`, in percent of the limit (default 90).",
+          "type": "integer",
+          "format": "uint32",
+          "default": 90,
+          "minimum": 0
+        },
+        "sheddable": {
+          "description": "Routes with `priority_class: sheddable`, in percent of the limit (default 75; at most\n`normal`).",
+          "type": "integer",
+          "format": "uint32",
+          "default": 75,
           "minimum": 0
         }
       },
@@ -1418,9 +1573,26 @@
           "$ref": "#/$defs/BackendAddress"
         },
         "backup": {
-          "description": "Only used when no primary backend is available.",
+          "description": "Only used when no primary backend is available: the same as `priority: 1`.",
           "type": "boolean",
           "default": false
+        },
+        "for_zones": {
+          "description": "Zones whose proxies should use this backend under `locality: { mode: prefer }`, instead\nof its own `zone` (Kubernetes topology hints, `hints.forZones`).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "priority": {
+          "description": "Priority tier from 0 (the default, used first) to 7. See the service's `failover`.\nNot together with `backup`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
         },
         "weight": {
           "description": "Relative share of traffic.",
@@ -1428,6 +1600,13 @@
           "format": "uint32",
           "default": 1,
           "minimum": 0
+        },
+        "zone": {
+          "description": "The zone the backend runs in, e.g. `eu-west-1a`, for `locality: { mode: prefer }`.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "additionalProperties": false,
@@ -1696,6 +1875,188 @@
         }
       ]
     },
+    "Cluster": {
+      "description": "The data-plane side of a cluster.",
+      "type": "object",
+      "properties": {
+        "control": {
+          "description": "The control plane this data plane takes its configuration from.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClusterControl"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "instance": {
+          "description": "This instance's name in leases and the control plane's instance list: letters, digits,\n`.`, `-` and `_`, at most 63 characters. Default: the identity the control plane gave\nat enrolment, or (without a control plane) an id generated once and kept in\n`$RDOCK_DATA_DIR/cluster/instance`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limits": {
+          "description": "How `rate_limit` and `quota` with `scope: cluster` share their budgets.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClusterLimits"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "store": {
+          "description": "Where certificates, the ACME account, leases and challenge answers are shared. Default:\nthe control plane when `control` is set.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClusterStore"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "ClusterControl": {
+      "description": "How a data plane reaches its control plane.",
+      "type": "object",
+      "properties": {
+        "ca_file": {
+          "description": "The cluster CA certificate (PEM), as `rdock control ca` prints it. One of `ca_file` and\n`ca_pin` is required.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ca_pin": {
+          "description": "The SHA-256 of the cluster CA certificate (DER), as `sha256:<64 hex digits>`; `rdock\ncontrol token create` prints it. The first connection accepts the control plane only\nwhen its chain contains a CA with this digest; the CA is then kept in `identity_dir`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "identity_dir": {
+          "description": "Where the instance's key, certificate and the cluster CA are kept (mode 0700). Default\n`$RDOCK_DATA_DIR/cluster`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "join_token": {
+          "description": "The single-use join token from `rdock control token create`, used only while the\ninstance has no identity yet. A secret: reference a file, e.g.\n`\"${file:/run/secrets/rdock-join}\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "poll_timeout": {
+          "description": "How long one request for the next bundle waits on the control plane before it is asked\nagain. Default 30s (5s–5m).",
+          "$ref": "#/$defs/Duration",
+          "default": "30s"
+        },
+        "url": {
+          "description": "The control plane's cluster address, e.g. `https://control.example.com:7443`. Always\n`https`.",
+          "$ref": "#/$defs/HttpUrl"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url"
+      ]
+    },
+    "ClusterLimits": {
+      "description": "Shared budgets for `rate_limit` and `quota` with `scope: cluster` (ADR-0031).\n\nEach instance claims a part of each key's budget from the store ahead of use and admits\nrequests against what it claimed, so the request path never waits on the store. The\ncluster admits at most `L + N × max(c, ⌈L / N⌉)` per key and window, where `L` is the\nlimit, `N` the number of instances, `c = max(1, ⌈L × headroom_percent / (100 × N)⌉)` the\nheadroom an instance may use beyond its claims, and `⌈L / N⌉` what an instance admits for a\nkey new to it until its first claim returns.",
+      "type": "object",
+      "properties": {
+        "fallback": {
+          "description": "`share` (default) or `instance`: what an instance enforces while the store is away.",
+          "$ref": "#/$defs/LimitFallback",
+          "default": "share"
+        },
+        "headroom_percent": {
+          "description": "How far an instance may admit beyond the budget it has claimed, as a percentage of the\nlimit split between the instances: larger values absorb store latency at high request\nrates, smaller ones tighten the bound. Default 10 (0–100).",
+          "type": "integer",
+          "format": "uint8",
+          "default": 10,
+          "maximum": 255,
+          "minimum": 0
+        },
+        "redis": {
+          "description": "The Redis-compatible server, for `store: redis`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RedisStore"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "store": {
+          "description": "`cluster` (default) or `redis`.",
+          "$ref": "#/$defs/LimitStoreType",
+          "default": "cluster"
+        },
+        "sync_interval": {
+          "description": "How often claims, membership and recovery are attended to (claims a request needs are\nsent at once). Default 1s (100ms–10s).",
+          "$ref": "#/$defs/Duration",
+          "default": "1s"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ClusterStore": {
+      "description": "Where a cluster shares certificates, the ACME account, leases and challenge answers.",
+      "type": "object",
+      "properties": {
+        "barrier_timeout": {
+          "description": "How long the instance that orders a certificate waits for every live member to hold an\nHTTP-01 or TLS-ALPN-01 answer before the CA is told to validate. Members that have not\nconfirmed by then cannot answer; validation goes ahead. Default 10s (1s–2m).",
+          "$ref": "#/$defs/Duration",
+          "default": "10s"
+        },
+        "lease_ttl": {
+          "description": "How long a lease on a certificate name lasts unless its holder renews it (every third of\nit). Default 60s (10s–10m).",
+          "$ref": "#/$defs/Duration",
+          "default": "1m"
+        },
+        "path": {
+          "description": "The shared directory, for `type: directory`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "`control` (default) or `directory`.",
+          "$ref": "#/$defs/ClusterStoreType",
+          "default": "control"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ClusterStoreType": {
+      "description": "The kinds of cluster store.",
+      "oneOf": [
+        {
+          "description": "The control plane serves the store to enrolled members over mutual TLS. Leases carry a\nfencing token the control plane checks on every write.",
+          "type": "string",
+          "const": "control"
+        },
+        {
+          "description": "A directory every instance mounts (NFS, EFS, a shared volume). Best effort: lock files\nwith an expiry that depends on the instances' clocks, and no enforced fencing.",
+          "type": "string",
+          "const": "directory"
+        }
+      ]
+    },
     "CompressAlgorithm": {
       "description": "Compression algorithms.",
       "oneOf": [
@@ -1740,6 +2101,64 @@
             "string",
             "null"
           ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ControlPlane": {
+      "description": "The control-plane side of a cluster, read by `rdock control run` (never by `rdock run`).",
+      "type": "object",
+      "properties": {
+        "history": {
+          "description": "Published revisions kept for listing and rollback. Default 50 (1–1000).",
+          "type": "integer",
+          "format": "uint32",
+          "default": 50,
+          "minimum": 0
+        },
+        "identity_lifetime": {
+          "description": "Lifetime of the client certificate each data plane receives; it is renewed when a third\nis left. A data plane whose certificate expires while the control plane is away keeps\nserving but must enrol again with a new token. Default 30d (1h–90d).",
+          "$ref": "#/$defs/Duration",
+          "default": "30d"
+        },
+        "join_token_ttl": {
+          "description": "How long a join token from `rdock control token create` stays usable. Default 1h\n(1m–30d).",
+          "$ref": "#/$defs/Duration",
+          "default": "1h"
+        },
+        "listener": {
+          "description": "The cluster listener data planes connect to (mutual TLS, HTTP/2). Default\n`127.0.0.1:7443`: set an address other machines reach.",
+          "$ref": "#/$defs/ListenAddress",
+          "default": "127.0.0.1:7443"
+        },
+        "name": {
+          "description": "A display name for the cluster.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "names": {
+          "description": "DNS names and IP addresses on the control plane's server certificate, as data planes\nwrite them in `cluster.control.url`. `localhost`, `127.0.0.1`, `::1` and the listener's\nIP are always included.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "offline_after": {
+          "description": "A data plane that has not asked for a bundle for this long is shown as offline and is\nnot chosen as a canary. Default 90s (10s–1h).",
+          "$ref": "#/$defs/Duration",
+          "default": "1m30s"
+        },
+        "rollout": {
+          "description": "How a published revision reaches the data planes: one canary first, then the rest.",
+          "$ref": "#/$defs/Rollout",
+          "default": {
+            "auto_rollback": false,
+            "canary_timeout": "2m",
+            "mode": "canary",
+            "soak": "1m"
+          }
         }
       },
       "additionalProperties": false
@@ -2144,6 +2563,20 @@
         "^x-": {}
       }
     },
+    "DrainLimit": {
+      "description": "A duration, or `unlimited`.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Duration"
+        },
+        {
+          "type": "string",
+          "enum": [
+            "unlimited"
+          ]
+        }
+      ]
+    },
     "Duration": {
       "description": "Duration made of numbers with units: ms, s, m, h, d.",
       "type": "string",
@@ -2247,6 +2680,65 @@
         "hmac_key"
       ]
     },
+    "Factor": {
+      "description": "A number with up to three decimals, such as 1.4.",
+      "type": "number",
+      "examples": [
+        1.4
+      ],
+      "minimum": 0
+    },
+    "Failover": {
+      "description": "How traffic moves between backend priority tiers.",
+      "oneOf": [
+        {
+          "description": "The next tier only when every tier above has no available backend.",
+          "type": "string",
+          "const": "strict"
+        },
+        {
+          "description": "Tiers share traffic by their health and the overprovisioning factor.",
+          "type": "string",
+          "const": "spill"
+        }
+      ]
+    },
+    "FailurePercentageDetector": {
+      "description": "The failure-percentage detector, with Envoy's defaults.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Turns the detector on. Default `false`.",
+          "type": "boolean",
+          "default": false
+        },
+        "minimum_hosts": {
+          "description": "Backends with enough requests needed before anything is evaluated. Default 5; at\nleast 3.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 5,
+          "minimum": 0
+        },
+        "request_volume": {
+          "description": "Requests in the interval for a backend to count. Default 50.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 50,
+          "minimum": 0
+        },
+        "threshold": {
+          "description": "Failure share that ejects, in percent. Default 85.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 85,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
     "FileProvider": {
       "description": "File provider.",
       "type": "object",
@@ -2271,6 +2763,84 @@
       "required": [
         "paths"
       ]
+    },
+    "FloodLimit": {
+      "description": "A number, or `unlimited` to remove the limit.",
+      "oneOf": [
+        {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        {
+          "type": "string",
+          "enum": [
+            "unlimited"
+          ]
+        }
+      ]
+    },
+    "GeoIp": {
+      "description": "GeoIP databases in the MaxMind DB format (H-SEC-04, ADR-0031): MaxMind GeoLite2 or GeoIP2,\nDB-IP Lite or IPinfo Lite files that you download and keep current. The files are read into\nmemory and read again when they change.",
+      "type": "object",
+      "properties": {
+        "asn_database": {
+          "description": "An ASN database (`.mmdb`, e.g. GeoLite2-ASN) for `ClientASN`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "database": {
+          "description": "A country database (`.mmdb`): gives `ClientCountry` and `ClientContinent`. A file that\nalso carries ASNs (IPinfo Lite) gives `ClientASN` as well.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "log": {
+          "description": "Opt-in access-log fields; both off by default, since a location tied to an IP address\nis personal data in many jurisdictions.",
+          "$ref": "#/$defs/GeoIpLog",
+          "default": {
+            "asn": false,
+            "country": false
+          }
+        },
+        "max_age": {
+          "description": "The oldest database build accepted, by the build time in its metadata. Default 30 days:\nthe GeoLite End User License Agreement (updated 2026-02-12) requires deleting a\nversion within thirty days of a newer release.",
+          "$ref": "#/$defs/Duration",
+          "default": "30d"
+        },
+        "on_stale": {
+          "description": "What an older database does: `warn` (the default) logs a warning and keeps using it;\n`refuse` refuses to load it, so the configuration that needs it is refused.",
+          "$ref": "#/$defs/OnStale",
+          "default": "warn"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "GeoIpLog": {
+      "description": "GeoIP fields in the access log.",
+      "type": "object",
+      "properties": {
+        "asn": {
+          "description": "Log `asn`.",
+          "type": "boolean",
+          "default": false
+        },
+        "country": {
+          "description": "Log `country` (ISO 3166-1 alpha-2).",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "GoogleCloudDnsProvider": {
       "description": "Google Cloud DNS (`type: google_cloud_dns`).",
@@ -2380,10 +2950,10 @@
           "default": null
         },
         "slow_start": {
-          "description": "A backend that becomes healthy ramps up its weight over this time.",
+          "description": "A backend that becomes healthy again ramps up its weight: a duration such as `30s`, or\n`{ window, aggression, min_weight_percent, on }`. Not with hash policies.",
           "anyOf": [
             {
-              "$ref": "#/$defs/Duration"
+              "$ref": "#/$defs/SlowStart"
             },
             {
               "type": "null"
@@ -2436,6 +3006,36 @@
           "const": "grpc"
         }
       ]
+    },
+    "Hedge": {
+      "description": "Hedged requests (planned).",
+      "type": "object",
+      "properties": {
+        "delay": {
+          "description": "Time without a response after which the hedge would be sent.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_attempts": {
+          "description": "Attempts in flight at most, the first included.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "HetznerProvider": {
       "description": "Hetzner DNS through the Hetzner Cloud API (`type: hetzner`).",
@@ -2514,6 +3114,46 @@
       },
       "required": [
         "max_age"
+      ]
+    },
+    "Http3Congestion": {
+      "description": "QUIC congestion controllers (quinn 0.11).",
+      "oneOf": [
+        {
+          "description": "CUBIC (RFC 9438).",
+          "type": "string",
+          "const": "cubic"
+        },
+        {
+          "description": "`NewReno` (RFC 9002 §7).",
+          "type": "string",
+          "const": "newreno"
+        },
+        {
+          "description": "BBR; quinn marks its implementation experimental.",
+          "type": "string",
+          "const": "bbr"
+        }
+      ]
+    },
+    "Http3Retry": {
+      "description": "When an HTTP/3 listener sends QUIC Retry packets.",
+      "oneOf": [
+        {
+          "description": "While 100 or more connections are half-open.",
+          "type": "string",
+          "const": "auto"
+        },
+        {
+          "description": "For every new connection without a valid token.",
+          "type": "string",
+          "const": "always"
+        },
+        {
+          "description": "Not proactively; Retry is still sent when the listener is full, when the client is at\nits limit, or once half-open connections reach half of `max_connections`.",
+          "type": "string",
+          "const": "never"
+        }
       ]
     },
     "HttpUrl": {
@@ -2847,6 +3487,21 @@
         }
       ]
     },
+    "LatencyMeasure": {
+      "description": "What a `peak_ewma` latency sample measures.",
+      "oneOf": [
+        {
+          "description": "Time to the response headers (NGINX `least_time header`): a long download or a slow\nclient does not make a backend look slow.",
+          "type": "string",
+          "const": "first_byte"
+        },
+        {
+          "description": "Time to the end of the response (NGINX `last_byte`). Upgraded connections (WebSocket)\ngive no sample.",
+          "type": "string",
+          "const": "last_byte"
+        }
+      ]
+    },
     "LatencyRule": {
       "description": "A p99 latency threshold.",
       "type": "object",
@@ -2915,6 +3570,11 @@
           "description": "Consistent hash of a cookie (`hash_on`).",
           "type": "string",
           "const": "cookie_hash"
+        },
+        {
+          "description": "Power of two distinct random choices over `latency × (in_flight + 1) / weight`, with a\nlatency average that reacts to peaks at once (Finagle's and Linkerd's Peak-EWMA).",
+          "type": "string",
+          "const": "peak_ewma"
         }
       ]
     },
@@ -2933,6 +3593,21 @@
         "^x-": {}
       }
     },
+    "LimitFallback": {
+      "description": "What an instance enforces while the limit store cannot be reached.",
+      "oneOf": [
+        {
+          "description": "Its share: the limit divided by the number of instances it last knew of, against what\nit admitted itself in the window. The cluster stays near the limit under even load.",
+          "type": "string",
+          "const": "share"
+        },
+        {
+          "description": "The whole limit on its own, as with `scope: instance` (N instances admit up to N times\nthe limit).",
+          "type": "string",
+          "const": "instance"
+        }
+      ]
+    },
     "LimitHeaders": {
       "description": "Rate-limit response headers.",
       "oneOf": [
@@ -2945,6 +3620,36 @@
           "description": "`RateLimit-Policy` and `RateLimit` as in `draft-ietf-httpapi-ratelimit-headers-11`.",
           "type": "string",
           "const": "draft"
+        }
+      ]
+    },
+    "LimitScope": {
+      "description": "Where a limit is counted (ADR-0031).",
+      "oneOf": [
+        {
+          "description": "Each instance counts on its own: N instances admit up to N times the limit.",
+          "type": "string",
+          "const": "instance"
+        },
+        {
+          "description": "The instances of a cluster share the limit through `cluster.limits` (the cluster store\nor Redis), within a documented bound; each falls back to its share when the store is\naway. Without a cluster it counts per instance.",
+          "type": "string",
+          "const": "cluster"
+        }
+      ]
+    },
+    "LimitStoreType": {
+      "description": "Where cluster-scoped limits keep their shared counters.",
+      "oneOf": [
+        {
+          "description": "The cluster store (`cluster.store`: the control plane or the shared directory).",
+          "type": "string",
+          "const": "cluster"
+        },
+        {
+          "description": "A Redis-compatible server (`redis`).",
+          "type": "string",
+          "const": "redis"
         }
       ]
     },
@@ -3022,6 +3727,28 @@
           "description": "Address to bind, e.g. `:443` or `127.0.0.1:8080`.",
           "$ref": "#/$defs/ListenAddress"
         },
+        "http2": {
+          "description": "HTTP/2 settings of `http` (h2c) and `https` listeners (H-PERF-03, ADR-0031). Unset\nvalues keep the behaviour before v0.9.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ListenerHttp2"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "http3": {
+          "description": "HTTP/3 over QUIC on the same address, `https` listeners only (experimental, ADR-0032):\nthe listener then also owns the UDP socket of its address. Needs a build with the\n`http3` cargo feature; off by default.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ListenerHttp3"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "ping": {
           "description": "A path answered `200 OK` for any host before routing, for load-balancer health\nmonitors such as Cloudflare Load Balancing, e.g. `/rdock/ping`.",
           "type": [
@@ -3059,6 +3786,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/UdpSessions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "socket": {
+          "description": "Options of the listening socket and of the connections it accepts (ADR-0031). Unset\noptions keep the kernel's behaviour, except `backlog`, which defaults to 4096.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ListenerSocket"
             },
             {
               "type": "null"
@@ -3108,6 +3846,240 @@
         "address"
       ]
     },
+    "ListenerHttp2": {
+      "description": "HTTP/2 settings of a listener (RFC 9113 §6.5.2). Unset values keep what Pingora 0.9.1 and\nh2 0.4.20 do; the limits that protect against stream and reset floods can only be removed\nby writing `unlimited`.",
+      "type": "object",
+      "properties": {
+        "initial_connection_window": {
+          "description": "Flow-control window of the whole connection. Default 65535 bytes; 65535 to 2^31-1.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ByteSize"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "initial_stream_window": {
+          "description": "Flow-control window of each stream (`SETTINGS_INITIAL_WINDOW_SIZE`): how much request\nbody a client may send before rdock reads it. Default 65535 bytes (the protocol's\ninitial value); at most 2^31-1.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ByteSize"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_concurrent_streams": {
+          "description": "Streams a client may have open at once (`SETTINGS_MAX_CONCURRENT_STREAMS`). Default 100\n(Pingora's bound); at most 10000 unless `unlimited`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FloodLimit"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_frame_size": {
+          "description": "Largest frame payload rdock accepts (`SETTINGS_MAX_FRAME_SIZE`). Default 16384; 16384\nto 16777215 (RFC 9113 §6.5.2).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ByteSize"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_header_list_size": {
+          "description": "Largest decoded request header list (`SETTINGS_MAX_HEADER_LIST_SIZE`). Default 64KiB\n(Pingora's bound); 1KiB to 16MiB.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ByteSize"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_local_error_reset_streams": {
+          "description": "Streams rdock resets because the client misbehaved before the connection is closed (the\n`MadeYouReset` mitigation, CVE-2025-8671). Default 1024 (h2's); at most 100000 unless\n`unlimited`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FloodLimit"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_pending_accept_reset_streams": {
+          "description": "Streams a client may reset before rdock accepted them, at once (the HTTP/2 Rapid Reset\nmitigation, CVE-2023-44487). Default 20 (h2's); at most 10000 unless `unlimited`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FloodLimit"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_send_buffer": {
+          "description": "Response data buffered per stream for a client that reads slowly. Default 400KiB (h2's);\n16KiB to 16MiB.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ByteSize"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "ListenerHttp3": {
+      "description": "HTTP/3 settings of an `https` listener (experimental, ADR-0032). Every limit is bounded;\nnothing is unlimited.",
+      "type": "object",
+      "properties": {
+        "advertise": {
+          "description": "Add `Alt-Svc: h3=\":<port>\"` to this listener's HTTP/1 and HTTP/2 responses while the\nQUIC endpoint serves (RFC 9114 §3.1.1). Default `true`.",
+          "type": "boolean",
+          "default": true
+        },
+        "advertise_max_age": {
+          "description": "How long clients may remember the advertisement (`ma`). Default 1h (RFC 7838's default\nis 24h; shorter while experimental); 1s to 30d.",
+          "$ref": "#/$defs/Duration",
+          "default": "1h"
+        },
+        "advertise_port": {
+          "description": "The UDP port to advertise when it differs from the listener's (a port mapping such as\npublic 443 to container 8443). Default: the listener's port.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "client_ipv6_prefix": {
+          "description": "The IPv6 prefix length that counts as one client for `max_connections_per_client`.\nDefault 64 (one subscriber's network, RFC 6177); 32 to 128.",
+          "type": "integer",
+          "format": "uint8",
+          "default": 64,
+          "maximum": 255,
+          "minimum": 0
+        },
+        "congestion": {
+          "description": "Congestion controller. Default `cubic`.",
+          "$ref": "#/$defs/Http3Congestion",
+          "default": "cubic"
+        },
+        "datagrams": {
+          "description": "HTTP/3 datagrams (RFC 9297). Not supported (planned).",
+          "type": "boolean",
+          "default": false
+        },
+        "early_data": {
+          "description": "Accept 0-RTT early data. Not supported (planned): early data can be replayed.",
+          "type": "boolean",
+          "default": false
+        },
+        "enabled": {
+          "description": "Serve HTTP/3 on the UDP port of the listener's address. Default `false`.",
+          "type": "boolean",
+          "default": false
+        },
+        "extended_connect": {
+          "description": "Extended CONNECT (RFC 9220 WebSocket over HTTP/3, RFC 9298 CONNECT-UDP). Not supported\n(planned).",
+          "type": "boolean",
+          "default": false
+        },
+        "gso": {
+          "description": "UDP generic segmentation offload where the kernel supports it. Default `true`.",
+          "type": "boolean",
+          "default": true
+        },
+        "max_concurrent_streams": {
+          "description": "Request streams a client may have open at once per connection\n(`initial_max_streams_bidi`). Default 100; 1 to 10000.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 100,
+          "minimum": 0
+        },
+        "max_connections": {
+          "description": "QUIC connections the listener holds at once. Default 1000; 1 to 1000000. Worst-case\nmemory is `max_connections × (2 × receive_window + send_window)`: about 3 GiB with the\ndefaults; validation warns above 4 GiB.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 1000,
+          "minimum": 0
+        },
+        "max_connections_per_client": {
+          "description": "QUIC connections one client holds at once. A client is one IPv4 address, or one IPv6\nprefix of `client_ipv6_prefix` bits. Only connections whose address is validated count.\nDefault 100; 1 to `max_connections`.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 100,
+          "minimum": 0
+        },
+        "max_header_size": {
+          "description": "Largest request header section (`SETTINGS_MAX_FIELD_SECTION_SIZE`, counted as RFC 9114\n§4.2.2 does: name + value + 32 bytes per field). Default 64KiB; 1KiB to 768KiB, and at\nmost `receive_window`.",
+          "$ref": "#/$defs/ByteSize",
+          "default": "64KiB"
+        },
+        "max_idle": {
+          "description": "Close a connection with no activity for this long (QUIC `max_idle_timeout`). Default\n30s (HAProxy's); 1s to 10m.",
+          "$ref": "#/$defs/Duration",
+          "default": "30s"
+        },
+        "migration": {
+          "description": "Let clients move a connection to another address (active migration). Not supported\n(planned). With migration off, quinn 0.11 drops packets from a new address, so a client\nwhose NAT rebinds loses the connection and reconnects.",
+          "type": "boolean",
+          "default": false
+        },
+        "qlog": {
+          "description": "Write qlog traces into this directory. Not supported in this version (planned).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "receive_window": {
+          "description": "Data a client may send on the whole connection before rdock reads it (QUIC\n`initial_max_data`). rdock also holds at most this much of incomplete HEADERS and other\nnon-DATA frames per connection. Default 1MiB; 64KiB to 64MiB.",
+          "$ref": "#/$defs/ByteSize",
+          "default": "1MiB"
+        },
+        "retry": {
+          "description": "When to make clients prove their address with a QUIC Retry before any handshake work\n(RFC 9000 §8.1.2). `auto` (default) sends Retry while 100 or more connections are\nhalf-open (HAProxy's `tune.quic.retry-threshold`); `always`; `never` drops that\nthreshold only. Whatever the setting, a client whose address is not yet validated is\nsent Retry instead of being refused when the listener is full, when its address already\nholds `max_connections_per_client` connections or handshakes, and once half-open\nconnections reach half of `max_connections`: spoofed packets can neither lock a client\nout nor fill the listener.",
+          "$ref": "#/$defs/Http3Retry",
+          "default": "auto"
+        },
+        "send_window": {
+          "description": "Response data rdock buffers per connection for a client that has not acknowledged it\nyet. Default 1MiB; 64KiB to 64MiB.",
+          "$ref": "#/$defs/ByteSize",
+          "default": "1MiB"
+        },
+        "stream_receive_window": {
+          "description": "Request body a client may send on one stream before rdock reads it (QUIC\n`initial_max_stream_data_bidi_remote`). Default 512KiB; 16KiB to 16MiB, and at most\n`receive_window`.",
+          "$ref": "#/$defs/ByteSize",
+          "default": "512KiB"
+        },
+        "webtransport": {
+          "description": "WebTransport over HTTP/3. Not supported (planned).",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
     "ListenerProtocol": {
       "description": "Listener protocols.",
       "oneOf": [
@@ -3132,6 +4104,100 @@
           "const": "udp"
         }
       ]
+    },
+    "ListenerSocket": {
+      "description": "Socket options of a listener. Options that do not apply to the listener's transport are\nrefused, and so are options this platform cannot set.",
+      "type": "object",
+      "properties": {
+        "backlog": {
+          "description": "TCP: how many connections the kernel holds that have completed their handshake and\nthat ReverseDock has not accepted yet. Default 4096, Linux's `net.core.somaxconn`\ndefault since 5.4, which also caps it (before v0.9 it was 128).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "dscp": {
+          "description": "DSCP value (0–63) of the traffic sent on accepted connections (the top six bits of\nIPv4's TOS byte or IPv6's traffic class).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "fast_open": {
+          "description": "TCP: accept TCP Fast Open with this many pending requests (`TCP_FASTOPEN`). The kernel\nmust allow it for servers (`net.ipv4.tcp_fastopen` bit 2). Linux only; off by default.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "ipv6_only": {
+          "description": "`IPV6_V6ONLY` for an IPv6 or all-interfaces (`:port`) address: `true` serves IPv6 only,\n`false` IPv6 and IPv4. Unset: the system's default (`net.ipv6.bindv6only`).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "keepalive": {
+          "description": "TCP keep-alive probes on accepted connections. Unset: off, as the kernel does.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TcpKeepalive"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "receive_buffer": {
+          "description": "`SO_RCVBUF`: the receive buffer, set before `listen` so the TCP window scale is\nnegotiated with it. Unset: the kernel's automatic sizing.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ByteSize"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reuse_port": {
+          "description": "TCP: `SO_REUSEPORT`, so several sockets (or processes) can bind the same address and\nthe kernel spreads connections over them. Off by default: with it, another process of\nthe same user can bind the address unnoticed. Refused on `udp` listeners.",
+          "type": "boolean",
+          "default": false
+        },
+        "send_buffer": {
+          "description": "`SO_SNDBUF`: the send buffer. Unset: the kernel's automatic sizing.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ByteSize"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "user_timeout": {
+          "description": "TCP: `TCP_USER_TIMEOUT` on accepted connections, how long sent data may stay\nunacknowledged before the connection is dropped. Linux only.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "ListenerTimeouts": {
       "description": "Timeouts for the client side of a listener.",
@@ -3186,10 +4252,52 @@
           ],
           "default": null
         },
+        "fingerprint": {
+          "description": "TLS client fingerprints (H-SEC-03): JA4, and JA3 on request, computed from each\nconnection's ClientHello. Unset (the default), no ClientHello is read for it and\n`ClientFingerprint`, the `ja4` keys and the access-log fields stay empty.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TlsFingerprint"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_handshakes": {
+          "description": "`https` listeners: TLS handshakes in progress at once. While the bound is reached, new\nconnections wait in the listen backlog instead of taking CPU from established ones.\nUnset: no bound (ADR-0031).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
         "policy": {
           "description": "TLS versions and cipher suites.",
           "$ref": "#/$defs/TlsPolicy",
           "default": "intermediate"
+        },
+        "session_cache": {
+          "description": "Sessions kept in memory for resumption by session ID (TLS 1.2, and TLS 1.3 when\ntickets are off), shared like the ticket keys. Default 256 sessions.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TlsSessionCache"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tickets": {
+          "description": "Session tickets (stateless resumption, H-PERF-02). On by default, with keys shared by\nevery listener of the same security class and kept across reloads and binary upgrades.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TlsTickets"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false,
@@ -3201,6 +4309,17 @@
       "description": "Backend selection.",
       "type": "object",
       "properties": {
+        "decay": {
+          "description": "`peak_ewma`: time constant of the latency average. Default 10s (Finagle's and\nLinkerd's `decay`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "hash_on": {
           "description": "Header or cookie name for `header_hash` and `cookie_hash`.",
           "type": [
@@ -3208,6 +4327,17 @@
             "null"
           ],
           "default": null
+        },
+        "measure": {
+          "description": "`peak_ewma`: what a latency sample measures. Default `first_byte`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LatencyMeasure"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "policy": {
           "description": "Selection policy.",
@@ -3219,6 +4349,43 @@
       "patternProperties": {
         "^x-": {}
       }
+    },
+    "Locality": {
+      "description": "The proxy's zone and the default locality preference of services (H-HA-05, ADR-0031).",
+      "type": "object",
+      "properties": {
+        "mode": {
+          "description": "`prefer`: services use only backends of this zone while at least one of them is\navailable, and every backend otherwise (Kubernetes `PreferSameZone`). `off` (the\ndefault, as Kubernetes distributes traffic evenly by default) ignores zones. A\nservice's own `locality.mode` overrides this.",
+          "$ref": "#/$defs/LocalityMode",
+          "default": "off"
+        },
+        "zone": {
+          "description": "The zone this proxy runs in, e.g. `eu-west-1a`. When omitted, the `RDOCK_ZONE`\nenvironment variable gives it; with neither, `prefer` has no effect.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "LocalityMode": {
+      "description": "Whether backends in the proxy's zone are preferred.",
+      "oneOf": [
+        {
+          "description": "Every available backend, whatever its zone.",
+          "type": "string",
+          "const": "off"
+        },
+        {
+          "description": "Only backends in the proxy's zone while at least one of them is available; all\notherwise (Kubernetes `PreferSameZone`).",
+          "type": "string",
+          "const": "prefer"
+        }
+      ]
     },
     "LogFormat": {
       "description": "Access log formats.",
@@ -3838,7 +5005,7 @@
               "default": "client_ip"
             },
             "overrides": {
-              "description": "Group → limit for consumers in that group, with `key: consumer`. The first of the\nconsumer's groups (in its `groups` order) that has an override wins.",
+              "description": "Group → limit for consumers in that group, with `key: consumer` or `key: group`. With\n`consumer`, the first of the consumer's groups (in its `groups` order) that has an\noverride wins; with `group`, the override of the primary group (the first one) applies.",
               "type": "object",
               "additionalProperties": {
                 "$ref": "#/$defs/RateOverride"
@@ -3848,6 +5015,10 @@
               "description": "Period of `average`.",
               "$ref": "#/$defs/Duration",
               "default": "1s"
+            },
+            "scope": {
+              "description": "`instance` (default) or `cluster`. With `cluster`, the cluster admits at most\n`average` requests per key in each `period` (fixed windows from the Unix epoch), within\nthe bound of `cluster.limits`; each instance's own token bucket still shapes bursts.",
+              "$ref": "#/$defs/LimitScope"
             },
             "type": {
               "type": "string",
@@ -3889,6 +5060,10 @@
               "description": "How long a queued request waits before it gets `429`.",
               "$ref": "#/$defs/Duration",
               "default": "5s"
+            },
+            "scope": {
+              "description": "Only `instance`: a cluster-wide count of requests in flight is planned.",
+              "$ref": "#/$defs/LimitScope"
             },
             "type": {
               "type": "string",
@@ -4263,6 +5438,13 @@
                 "query": null
               }
             },
+            "trusted_groups": {
+              "description": "Groups from `groups_claim` that count for `key: group` and for group `overrides` of\n`rate_limit` and `quota`, as if configured. Other token groups are kept on the\nconsumer (metering, headers) but never share a configured group's budget or override,\nand a consumer with only those is counted on its own.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
             "type": {
               "type": "string",
               "const": "jwt"
@@ -4288,9 +5470,23 @@
           "type": "object",
           "properties": {
             "allow": {
-              "description": "Names a certificate must have one of: its common name or a DNS, URI or email SAN.\n`*` matches any run of characters, e.g. `*.clients.example.com`. Any name when empty.",
+              "description": "Names a certificate must have one of: its common name or a DNS, URI or email SAN.\n`*` matches any run of characters, e.g. `*.clients.example.com`. Any name when empty.\nThe typed lists below check one field each and are safer: a URI pattern there cannot\nbe satisfied by a common name that carries the same text.",
               "type": "array",
               "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "dns": {
+              "description": "DNS SANs, one must match (`*` globs).",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "emails": {
+              "description": "Email SANs, one must match (`*` globs).",
+              "type": "array",
               "items": {
                 "type": "string"
               }
@@ -4300,14 +5496,60 @@
               "$ref": "#/$defs/ClientCertForward",
               "default": "none"
             },
+            "organizations": {
+              "description": "Subject organizations (O), one must match (`*` globs).",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
             "required": {
               "description": "Answer `403` to requests without a verified client certificate.",
               "type": "boolean",
               "default": true
             },
+            "serials": {
+              "description": "Certificate serial numbers in hex (`0a1b…`, colons allowed), exact.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "sha256": {
+              "description": "SHA-256 fingerprints of the certificate in hex (colons allowed), exact: pins.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "spiffe": {
+              "description": "SPIFFE X.509-SVID rules (H-SEC-05): the certificate must be a valid SVID of one of the\ntrust domains, and its ID one of `ids` or under one of `id_prefixes`.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SpiffeRules"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "subjects": {
+              "description": "Subject common names, one must match (`*` globs). Every typed list that is set must\nmatch, together with `allow`.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
             "type": {
               "type": "string",
               "const": "client_cert"
+            },
+            "uris": {
+              "description": "URI SANs, one must match (`*` globs).",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "additionalProperties": false,
@@ -5013,7 +6255,7 @@
               "default": "off"
             },
             "key": {
-              "description": "What to count by; only `consumer` (the default) is accepted. Requests without a\nconsumer are counted per client IP.",
+              "description": "What to count by: `consumer` (the default) or `group` (the consumer's primary group,\nthe first of its `groups`: all consumers of a group share one count). Requests without\na consumer are counted per client IP.",
               "$ref": "#/$defs/RateLimitKey",
               "default": "consumer"
             },
@@ -5024,13 +6266,17 @@
               "minimum": 0
             },
             "overrides": {
-              "description": "Group → limit, for consumers in that group (the first of the consumer's groups that has\none wins).",
+              "description": "Group → limit, for consumers in that group (with `key: consumer`, the first of the\nconsumer's groups that has one wins; with `key: group`, the primary group's).",
               "type": "object",
               "additionalProperties": {
                 "type": "integer",
                 "format": "uint64",
                 "minimum": 0
               }
+            },
+            "scope": {
+              "description": "`instance` (default) or `cluster`: with `cluster`, the instances of a cluster share each\nkey's quota through `cluster.limits`, within its documented bound.",
+              "$ref": "#/$defs/LimitScope"
             },
             "type": {
               "type": "string",
@@ -5337,6 +6583,236 @@
             "client_id",
             "session"
           ]
+        },
+        {
+          "description": "Count abuse signals (response statuses, failed authentications) per key in a window\nand ban keys past a threshold for a while (H-SEC-01). Per instance; bans survive\nrestarts and binary upgrades.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "description": "What a banned key gets: `deny` (`403`, problem type `banned`, the default), `tarpit`\n(held for `tarpit.delay`, then denied) or `tag` (served; the access log and later\nmiddlewares see `abuse: tagged`).",
+              "$ref": "#/$defs/AbuseAction",
+              "default": "deny"
+            },
+            "ban": {
+              "description": "How long a ban lasts. Default 10m.",
+              "$ref": "#/$defs/Duration",
+              "default": "10m"
+            },
+            "events": {
+              "description": "What counts: status codes (`401`), classes (`4xx`) and `auth_failure` (an\nauthentication middleware refused the credentials). Default `[401, 403]`.",
+              "type": "array",
+              "default": [
+                401,
+                403
+              ],
+              "items": {
+                "$ref": "#/$defs/AbuseEvent"
+              }
+            },
+            "exempt": {
+              "description": "Client networks never counted or banned. Default the loopback networks; the\n`security.trusted_proxies` networks are always added, so a proxy whose clients are not\nresolved can never ban itself, and with it everyone behind it.",
+              "type": "array",
+              "default": [
+                "127.0.0.0/8",
+                "::1/128"
+              ],
+              "items": {
+                "$ref": "#/$defs/IpNetwork"
+              }
+            },
+            "key": {
+              "description": "What to count by: `client_ip` (the default; IPv6 by /64), `consumer`, `ja4` or\n`header:<Name>`. Requests without a consumer or fingerprint count by client address.",
+              "$ref": "#/$defs/AbuseKey",
+              "default": "client_ip"
+            },
+            "max_bans": {
+              "description": "Bans at once. The ban list is separate from the counters and nothing evicts a ban\nbefore it ends: when it is full, new bans are refused and counted in\n`rdock_abuse_bans_refused_total`. Default 10000.",
+              "type": "integer",
+              "format": "uint32",
+              "default": 10000,
+              "minimum": 0
+            },
+            "max_keys": {
+              "description": "Keys counted at once; past it, the oldest counters are dropped. Default 100000.",
+              "type": "integer",
+              "format": "uint32",
+              "default": 100000,
+              "minimum": 0
+            },
+            "tarpit": {
+              "description": "`action: tarpit`.",
+              "$ref": "#/$defs/Tarpit",
+              "default": {
+                "delay": "5s",
+                "max_held": 100
+              }
+            },
+            "threshold": {
+              "description": "Events within one `window` that start a ban. Default 20.",
+              "type": "integer",
+              "format": "uint32",
+              "default": 20,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "abuse"
+            },
+            "window": {
+              "description": "The counting window. Default 1m.",
+              "$ref": "#/$defs/Duration",
+              "default": "1m"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "An adaptive concurrency limit (H-LB-04, ADR-0031): it learns how many requests the\nroutes using it can have in flight from their latency (`aimd` or `gradient`) and\nanswers the rest with `503` and `Retry-After`, routes of the lowest `priority_class`\nfirst. Off unless configured.",
+          "type": "object",
+          "properties": {
+            "backoff_percent": {
+              "description": "`aimd` only: the limit is multiplied by this percentage on a drop (default 90, 50–99).",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "initial": {
+              "description": "The limit at start and after a reload (default 20, Netflix's, kept within `min`–`max`).",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "interval": {
+              "description": "`gradient` only: time between two measurements of the no-load latency (default 60s,\nthe `min_rtt_calc_params.interval` of Envoy's documented example; 1s–1h).",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Duration"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "jitter_percent": {
+              "description": "`gradient` only: a random part of `interval` added to it, in percent, so instances do\nnot measure at the same moment (default 15, Envoy's `jitter`; 0–100).",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "latency": {
+              "description": "`aimd` only: a sample slower than this counts as a drop (default 5s, Netflix's\n`timeout`). Measured from admission to the response headers.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Duration"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "max": {
+              "description": "The highest limit (default 1000, Envoy's `max_concurrency_limit`).",
+              "type": "integer",
+              "format": "uint32",
+              "default": 1000,
+              "minimum": 0
+            },
+            "min": {
+              "description": "The lowest limit (default 3, Envoy's `min_concurrency`).",
+              "type": "integer",
+              "format": "uint32",
+              "default": 3,
+              "minimum": 0
+            },
+            "mode": {
+              "description": "`aimd` or `gradient`.",
+              "$ref": "#/$defs/AdmissionMode"
+            },
+            "probe": {
+              "description": "`gradient` only: samples at `min` concurrency that make one measurement of the no-load\nlatency (default 50, Envoy's `request_count`; 5–1000).",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "probe_timeout": {
+              "description": "`gradient` only: the longest a measurement pins the limit to `min` (default 5s;\n100ms–60s). When it ends early, the median of the samples it has becomes the\nreference; without any, the previous reference stays.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Duration"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "queue": {
+              "description": "`gradient` only: requests allowed above the estimate (default 4, Netflix's\n`queueSize`).",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "retry_after": {
+              "description": "`Retry-After` of a shed request (default 1s).",
+              "$ref": "#/$defs/Duration",
+              "default": "1s"
+            },
+            "shares": {
+              "description": "The share of the limit `normal` and `sheddable` routes may fill, in percent.",
+              "$ref": "#/$defs/AdmissionShares",
+              "default": {
+                "normal": 90,
+                "sheddable": 75
+              }
+            },
+            "smoothing_percent": {
+              "description": "`gradient` only: the weight of a new estimate, in percent (default 20, 1–100).",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "tolerance_percent": {
+              "description": "`gradient` only: how much slower than the no-load latency a sample may be before the\nlimit shrinks, in percent (default 150, Netflix's `rttTolerance` 1.5; 100–1000).",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "admission"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "mode"
+          ]
         }
       ]
     },
@@ -5583,6 +7059,58 @@
         }
       ]
     },
+    "OnStale": {
+      "description": "What a GeoIP database older than `max_age` does.",
+      "oneOf": [
+        {
+          "description": "Log a warning and keep using it.",
+          "type": "string",
+          "const": "warn"
+        },
+        {
+          "description": "Refuse to load it.",
+          "type": "string",
+          "const": "refuse"
+        }
+      ]
+    },
+    "OutlierDetection": {
+      "description": "Outlier detectors (Envoy's outlier detection). Failures are those of passive health:\nconnection errors, resets, timeouts and `statuses`.",
+      "type": "object",
+      "properties": {
+        "failure_percentage": {
+          "description": "Ejects a backend whose failures reach `threshold` percent of its requests.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FailurePercentageDetector"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "interval": {
+          "description": "How often the detectors look at the counts of the last interval. Default 10s (Envoy).",
+          "$ref": "#/$defs/Duration",
+          "default": "10s"
+        },
+        "success_rate": {
+          "description": "Ejects a backend whose success rate is below `mean − stdev_factor × σ` of the others.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SuccessRateDetector"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
     "PassiveHealth": {
       "description": "Ejection of backends that keep failing.",
       "type": "object",
@@ -5591,6 +7119,11 @@
           "description": "How long an ejected backend stays out before one request tries it again; doubled for\neach ejection in a row, up to 5 minutes.",
           "$ref": "#/$defs/Duration",
           "default": "30s"
+        },
+        "ejection_jitter": {
+          "description": "Up to this much is added at random to each ejection time, so backends ejected by many\ninstances do not all return at once (Envoy's `max_ejection_time_jitter`). Default 0s.",
+          "$ref": "#/$defs/Duration",
+          "default": "0s"
         },
         "failures": {
           "description": "Failures within `window` that eject a backend.",
@@ -5605,6 +7138,17 @@
           "format": "uint32",
           "default": 50,
           "minimum": 0
+        },
+        "outlier": {
+          "description": "Statistical detectors that compare backends with each other once per interval and eject\nthe outliers through the same ejection as `failures` (back-off, `max_ejection_percent`,\ntrial request).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OutlierDetection"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "statuses": {
           "description": "Answers that count as failures, besides connection errors, resets and timeouts.",
@@ -5791,6 +7335,26 @@
         "schema"
       ]
     },
+    "PriorityClass": {
+      "description": "A route's class for load shedding by `admission` (H-LB-04).",
+      "oneOf": [
+        {
+          "description": "Shed last: may fill the whole limit.",
+          "type": "string",
+          "const": "critical"
+        },
+        {
+          "description": "The default: may fill `shares.normal` of the limit.",
+          "type": "string",
+          "const": "normal"
+        },
+        {
+          "description": "Shed first: may fill `shares.sheddable` of the limit.",
+          "type": "string",
+          "const": "sheddable"
+        }
+      ]
+    },
     "Providers": {
       "description": "Configuration sources besides this file.",
       "type": "object",
@@ -5962,7 +7526,7 @@
         "client_ip",
         "header:X-Api-Key"
       ],
-      "pattern": "^(client_ip|route|consumer|(header|cookie|claim):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$"
+      "pattern": "^(client_ip|route|consumer|group|ja4|(header|cookie|claim):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$"
     },
     "RateOverride": {
       "description": "A limit for the consumers of one group.",
@@ -6039,6 +7603,56 @@
         }
       ]
     },
+    "RedisStore": {
+      "description": "A Redis-compatible server (Redis, Valkey, …) for cluster-scoped limits. rdock uses\n`INCRBY`, `DECRBY`, `PEXPIREAT`, `ZADD`, `ZREMRANGEBYSCORE`, `ZCARD`, `TIME` (membership is\njudged by the server's clock; without it, by each instance's), `AUTH`, `SELECT` and\n`PING`.",
+      "type": "object",
+      "properties": {
+        "allow_plaintext": {
+          "description": "Allow `redis://` (no TLS) to an address that is not a loopback address. Off by default:\nthe password and the counters would cross the network in clear.",
+          "type": "boolean",
+          "default": false
+        },
+        "ca_file": {
+          "description": "CA certificates (PEM) to verify the server with instead of the system's roots.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key_prefix": {
+          "description": "Prefix of every key rdock writes. Default `rdock:`.",
+          "type": "string",
+          "default": "rdock:"
+        },
+        "password": {
+          "description": "The password. A secret: reference a file or a variable, e.g.\n`\"${file:/run/secrets/redis}\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timeout": {
+          "description": "The longest a connection or a command may take before the store counts as away.\nDefault 1s (100ms–10s).",
+          "$ref": "#/$defs/Duration",
+          "default": "1s"
+        },
+        "url": {
+          "description": "`rediss://host:6379/0` (TLS) or `redis://host:6379/0`; the path is the database\nnumber. Plain `redis://` is accepted for loopback addresses only, unless\n`allow_plaintext` is set. Credentials belong in `username` and `password`, not here.",
+          "type": "string"
+        },
+        "username": {
+          "description": "The ACL user name (Redis 6 and later); without it `AUTH` sends only the password.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url"
+      ]
+    },
     "RequestDirectives": {
       "description": "The client's request directives.",
       "oneOf": [
@@ -6101,6 +7715,17 @@
           "items": {
             "$ref": "#/$defs/RetryOn"
           }
+        },
+        "per_try_timeout": {
+          "description": "Abandons an attempt that has not finished a read for this long and retries it on\nanother backend, within the budget and only where a retry is allowed (`on` must list\n`timeout`). It replaces `timeouts.read` for every read of such an attempt, the wait for\nthe response headers and each pause of the response body; the last attempt and\nrequests that cannot be retried wait `timeouts.read`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "retry_non_idempotent": {
           "description": "Also retry non-idempotent methods such as POST. Only safe if backends are idempotent.",
@@ -6204,6 +7829,55 @@
         "nameserver"
       ]
     },
+    "Rollout": {
+      "description": "Staged rollout of published revisions (H-HA-02, ADR-0031).",
+      "type": "object",
+      "properties": {
+        "auto_rollback": {
+          "description": "Rolling back automatically when the canary's health drops: planned, only `false` is\naccepted.",
+          "type": "boolean",
+          "default": false
+        },
+        "canary": {
+          "description": "The instance that takes each revision first. When it is offline or not set, the first\nonline instance by name is chosen.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "canary_timeout": {
+          "description": "How long the canary has to report on a revision; without a report by then the rollout\nhalts. Default 2m (10s–1h).",
+          "$ref": "#/$defs/Duration",
+          "default": "2m"
+        },
+        "mode": {
+          "description": "`canary` (default) or `all`. The first revision of a cluster and rollbacks (including\nan abandoned rollout) always go to every instance at once.",
+          "$ref": "#/$defs/RolloutMode",
+          "default": "canary"
+        },
+        "soak": {
+          "description": "How long the canary serves a revision it acknowledged before the rest take it. Default\n60s (0s–24h).",
+          "$ref": "#/$defs/Duration",
+          "default": "1m"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RolloutMode": {
+      "description": "How a revision is rolled out.",
+      "oneOf": [
+        {
+          "description": "One canary takes the revision first; the rest follow after `soak` once it acknowledged\nit. A refusal (NACK) by any instance halts the rollout.",
+          "type": "string",
+          "const": "canary"
+        },
+        {
+          "description": "Every connected data plane takes the revision at once.",
+          "type": "string",
+          "const": "all"
+        }
+      ]
+    },
     "Route": {
       "description": "An HTTP route: which requests it matches, which middlewares run, which service answers.",
       "type": "object",
@@ -6276,6 +7950,10 @@
           "type": "integer",
           "format": "int64",
           "default": 0
+        },
+        "priority_class": {
+          "description": "Which requests an `admission` middleware sheds first under overload: `sheddable`,\nthen `normal` (the default), `critical` last. Unrelated to `priority`, which orders\nmatching.",
+          "$ref": "#/$defs/PriorityClass"
         },
         "service": {
           "description": "Service that handles matching requests (`name` or `name@provider`). Required unless the\nlast middleware answers every request itself (`static` without `pass_through`, or\n`maintenance` enabled for everyone).",
@@ -6471,6 +8149,36 @@
         "^x-": {}
       }
     },
+    "RuntimeSettings": {
+      "description": "The proxy's async runtime (ADR-0031). Read at start: a change takes effect after a restart.",
+      "type": "object",
+      "properties": {
+        "max_blocking_threads": {
+          "description": "Most threads for blocking work (file reads, DNS lookups by the system resolver).\nUnset: 512, tokio's default.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "worker_threads": {
+          "description": "Threads that serve connections. Unset: one per CPU the process may use, tokio's\ndefault.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
     "SameSite": {
       "description": "`SameSite` cookie attribute.",
       "oneOf": [
@@ -6508,6 +8216,11 @@
           "description": "HTTP/2 in cleartext (gRPC without TLS).",
           "type": "string",
           "const": "h2c"
+        },
+        {
+          "description": "HTTP/3 over QUIC. Not supported in this version (planned, ADR-0032): Pingora 0.9 has no\nQUIC connector.",
+          "type": "string",
+          "const": "h3"
         }
       ]
     },
@@ -6576,6 +8289,11 @@
             "$ref": "#/$defs/Backend"
           }
         },
+        "failover": {
+          "description": "How traffic moves between backend `priority` tiers. `strict` (the default): a tier gets\ntraffic only when every tier above it has no available backend. `spill`: a tier keeps\n`healthy share × overprovisioning` of the traffic (at most all of it) and the rest goes\nto the next tier, as Envoy's priority levels do.",
+          "$ref": "#/$defs/Failover",
+          "default": "strict"
+        },
         "health": {
           "description": "Active and passive health checks.",
           "anyOf": [
@@ -6588,6 +8306,17 @@
           ],
           "default": null
         },
+        "hedge": {
+          "description": "Hedged requests: a second attempt while the first is still waiting. Planned, not\nsupported: Pingora 0.9 cannot race two upstream attempts of one request. Use\n`retries.per_try_timeout` for stalled attempts.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Hedge"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "load_balancer": {
           "description": "How a backend is chosen for each request.",
           "$ref": "#/$defs/LoadBalancer",
@@ -6595,6 +8324,17 @@
             "hash_on": null,
             "policy": "round_robin"
           }
+        },
+        "locality": {
+          "description": "Prefer backends in the proxy's own zone (`locality` at the top level sets the zone).\nOmitted, the top-level `locality.mode` applies.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ServiceLocality"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "max_connections_per_backend": {
           "description": "Requests in flight to one backend; a backend at the limit gets no more until one ends.",
@@ -6615,6 +8355,17 @@
           "format": "uint32",
           "default": null,
           "minimum": 0
+        },
+        "overprovisioning": {
+          "description": "With `failover: spill`: how much more than its share each tier can carry. Default 1.4\n(Envoy's `overprovisioning_factor`): a tier keeps all traffic until fewer than about\n71 % of its backends are available.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Factor"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "pass_host_header": {
           "description": "Forward the client's `Host` header (otherwise the backend address is used).",
@@ -6698,6 +8449,23 @@
         "^x-": {}
       }
     },
+    "ServiceLocality": {
+      "description": "The locality preference of one service.",
+      "type": "object",
+      "properties": {
+        "mode": {
+          "description": "`prefer` or `off`.",
+          "$ref": "#/$defs/LocalityMode"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
+      "required": [
+        "mode"
+      ]
+    },
     "SessionLimit": {
       "description": "A number of sessions (at least 1), or `unlimited`.",
       "oneOf": [
@@ -6729,6 +8497,69 @@
         }
       ]
     },
+    "SlowStart": {
+      "description": "Time to full weight, such as `30s`, or every setting.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Duration"
+        },
+        {
+          "$ref": "#/$defs/SlowStartConfig"
+        }
+      ]
+    },
+    "SlowStartConfig": {
+      "description": "Slow start, every setting (Envoy's `SlowStartConfig`): the weight is\n`weight × max(min_weight_percent / 100, (elapsed / window)^(1 / aggression))`.",
+      "type": "object",
+      "properties": {
+        "aggression": {
+          "description": "Shape of the ramp: 1.0 (the default) is linear; above 1 ramps faster at first.",
+          "$ref": "#/$defs/Factor",
+          "default": 1
+        },
+        "min_weight_percent": {
+          "description": "The weight starts at this share, in percent. Default 10 (Envoy).",
+          "type": "integer",
+          "format": "uint32",
+          "default": 10,
+          "minimum": 0
+        },
+        "on": {
+          "description": "When a backend ramps: `recovery` (after failed probes or an ejection; the default) and\n`join` (a backend that newly appears in a pool that already had a backend at full\nweight; never at start-up or into an empty pool).",
+          "type": "array",
+          "default": [
+            "recovery"
+          ],
+          "items": {
+            "$ref": "#/$defs/SlowStartOn"
+          }
+        },
+        "window": {
+          "description": "Time to full weight.",
+          "$ref": "#/$defs/Duration",
+          "default": "30s"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "SlowStartOn": {
+      "description": "When a backend's weight ramps up.",
+      "oneOf": [
+        {
+          "description": "After recovering from failed probes or an ejection.",
+          "type": "string",
+          "const": "recovery"
+        },
+        {
+          "description": "When it newly appears in a pool that already had a backend at full weight.",
+          "type": "string",
+          "const": "join"
+        }
+      ]
+    },
     "SmtpTls": {
       "description": "How the SMTP connection is protected.",
       "oneOf": [
@@ -6748,6 +8579,43 @@
           "const": "none"
         }
       ]
+    },
+    "SpiffeRules": {
+      "description": "SPIFFE X.509-SVID checks on a client certificate (SPIFFE standards `X509-SVID.md` and\n`SPIFFE-ID.md`, commit 5d15e3ee of github.com/spiffe/spiffe, 2026-11-13): exactly one URI\nSAN, scheme `spiffe`, a valid trust domain and a non-root path, a leaf that is not a CA and\nmay not sign certificates or CRLs. The chain itself is verified by the listener's\n`client_auth`, whose CA bundle must be the trust domain's.",
+      "type": "object",
+      "properties": {
+        "consumer": {
+          "description": "Make the SPIFFE ID the request's consumer (for `rate_limit` and `quota` by consumer,\nmetering and the access log). Its issuer is `spiffe://<trust domain>`, so it never\nshares counters with an API-key or token consumer of the same name. Off by default.",
+          "type": "boolean",
+          "default": false
+        },
+        "id_prefixes": {
+          "description": "SPIFFE ID prefixes, matched segment by segment: `spiffe://prod.example.com/ns/web`\naccepts that ID and every ID below it, never `/ns/webshop`. With neither `ids` nor\n`id_prefixes`, any ID of the trust domains is accepted.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ids": {
+          "description": "SPIFFE IDs accepted exactly, e.g. `spiffe://prod.example.com/ns/web/sa/api`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "trust_domains": {
+          "description": "Trust domains accepted, e.g. `prod.example.com`. Required.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "SplitTarget": {
       "description": "One target of a weighted split.",
@@ -6953,6 +8821,40 @@
         "^x-": {}
       }
     },
+    "SuccessRateDetector": {
+      "description": "The success-rate detector, with Envoy's defaults.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Turns the detector on. Default `false`.",
+          "type": "boolean",
+          "default": false
+        },
+        "minimum_hosts": {
+          "description": "Backends with enough requests needed before anything is evaluated. Default 5; at\nleast 3.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 5,
+          "minimum": 0
+        },
+        "request_volume": {
+          "description": "Requests in the interval for a backend to count. Default 100.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 100,
+          "minimum": 0
+        },
+        "stdev_factor": {
+          "description": "Multiplier of the standard deviation. Default 1.9 (Envoy's 1900 / 1000).",
+          "$ref": "#/$defs/Factor",
+          "default": 1.9
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
     "SwarmEndpointMode": {
       "description": "How Swarm services are reached.",
       "oneOf": [
@@ -7058,6 +8960,69 @@
           "const": "tls"
         }
       ]
+    },
+    "Tarpit": {
+      "description": "How `action: tarpit` holds requests.",
+      "type": "object",
+      "properties": {
+        "delay": {
+          "description": "How long a request is held before the `403`. Default 5s, at most 60s.",
+          "$ref": "#/$defs/Duration",
+          "default": "5s"
+        },
+        "max_held": {
+          "description": "Requests held at once, all keys together; past it, banned requests are denied at once\n(holding connections costs the proxy too: HAProxy's manual warns that a tarpit \"can\nmake things worse\"). Default 100.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 100,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "TcpKeepalive": {
+      "description": "TCP keep-alive on accepted connections (`SO_KEEPALIVE`). Unset values keep the kernel's\n(Linux: 7200 s idle, 75 s between probes, 9 probes).",
+      "type": "object",
+      "properties": {
+        "count": {
+          "description": "Unanswered probes before the connection is dropped (`TCP_KEEPCNT`).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "idle": {
+          "description": "Idle time before the first probe (`TCP_KEEPIDLE`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "interval": {
+          "description": "Time between probes (`TCP_KEEPINTVL`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "TcpRoute": {
       "description": "A TCP route.",
@@ -7199,6 +9164,140 @@
         "^x-": {}
       }
     },
+    "Tenant": {
+      "description": "One tenant.",
+      "type": "object",
+      "properties": {
+        "allow_critical": {
+          "description": "Let the tenant's routes use `priority_class: critical` with an `admission` middleware\nit does not own (a shared one). Off: critical traffic on a shared limit is the\nadministrator's to define.",
+          "type": "boolean"
+        },
+        "backend_networks": {
+          "description": "Networks the tenant's backends may connect to. Empty: globally routable unicast\naddresses only (no loopback, link-local, private, unique-local, shared, multicast,\ndocumentation, reserved or cloud metadata address), checked on IP literals at\nvalidation and on every address a DNS name or SRV record resolves to, each time it\nresolves. Set: exactly these networks (a cloud metadata address only when listed on\nits own), and backends must be IP literals.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/IpNetwork"
+          }
+        },
+        "certificates": {
+          "description": "Planned: certificates the tenant owns.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dashboard": {
+          "description": "Planned: a dashboard view limited to the tenant.",
+          "type": "boolean"
+        },
+        "hosts": {
+          "description": "The host names the tenant's routes may match: `shop.example.com` or\n`*.shop.example.com` (any name below it, not the name itself). Claims of two tenants\nmay not overlap.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "limits": {
+          "description": "Ceilings on what the tenant's objects may hold, so one tenant cannot use up what\ntenants share (disk, the ACME account's rate limits).",
+          "$ref": "#/$defs/TenantLimits"
+        },
+        "listeners": {
+          "description": "Planned: listeners the tenant owns.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "metrics_label": {
+          "description": "Planned: a `tenant` label on the core metrics.",
+          "type": "boolean"
+        },
+        "prefix": {
+          "description": "The start of the names of the tenant's objects in the admin API (routes, services,\nmiddlewares). Defaults to `<tenant>-`. No tenant's prefix may start another's.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shared": {
+          "description": "Objects outside the prefix that the tenant's objects may reference (`name` for the\nconfiguration file's, `name@provider` for a provider's).",
+          "$ref": "#/$defs/TenantShared"
+        }
+      },
+      "additionalProperties": false
+    },
+    "TenantLimits": {
+      "description": "Ceilings on a tenant's objects. The defaults are small on purpose; an administrator raises\nthem per tenant.",
+      "type": "object",
+      "properties": {
+        "max_body": {
+          "description": "The largest request body a tenant route accepts, and the most its `hold_body`,\n`transform` and `validate` middlewares may hold (default 16MiB). A tenant route without\n`max_body` gets this one, or `security.limits.max_body_bytes` when that is smaller.",
+          "$ref": "#/$defs/ByteSize",
+          "default": "16MiB"
+        },
+        "max_middlewares": {
+          "description": "Middlewares the tenant may have (default 100).",
+          "type": "integer",
+          "format": "uint32",
+          "default": 100,
+          "minimum": 0
+        },
+        "max_routes": {
+          "description": "Routes the tenant may have (default 100).",
+          "type": "integer",
+          "format": "uint32",
+          "default": 100,
+          "minimum": 0
+        },
+        "max_services": {
+          "description": "Services the tenant may have (default 100).",
+          "type": "integer",
+          "format": "uint32",
+          "default": 100,
+          "minimum": 0
+        },
+        "max_tls_names": {
+          "description": "Distinct host names the tenant's routes may get automatic certificates for (default\n20): each one is an order on the ACME account every tenant shares, and Let's Encrypt\nlimits certificates per registered domain and orders per account.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 20,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "TenantShared": {
+      "description": "Objects outside a tenant's prefix that its objects may reference.",
+      "type": "object",
+      "properties": {
+        "caches": {
+          "description": "Cache stores (`caches`), for `cache` middlewares.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "middlewares": {
+          "description": "Middlewares.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "services": {
+          "description": "Services.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "Timeouts": {
       "description": "Upstream timeouts.",
       "type": "object",
@@ -7227,6 +9326,40 @@
           "description": "Sending request data.",
           "$ref": "#/$defs/Duration",
           "default": "1m"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "TlsFingerprint": {
+      "description": "Which TLS client fingerprints an `https` listener computes, and whether backends see them.\nThe values are computed from the outer ClientHello (with Encrypted Client Hello the inner\none is never seen), only for connections this listener terminates.",
+      "type": "object",
+      "properties": {
+        "header": {
+          "description": "A request header that carries the JA4 value to the backend, e.g. `X-JA4`. A copy sent\nby the client is always removed. Unset (the default): backends do not see it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ja3": {
+          "description": "JA3 (Salesforce, an MD5 of the ClientHello). Off by default: legacy, since Chrome 110\nrandomises the extension order that JA3 hashes, one browser has many JA3 values.",
+          "type": "boolean",
+          "default": false
+        },
+        "ja3_header": {
+          "description": "A request header that carries the JA3 value (needs `ja3: true`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ja4": {
+          "description": "JA4 (FoxIO, BSD 3-Clause). Default on when `fingerprint` is set.",
+          "type": "boolean",
+          "default": true
         }
       },
       "additionalProperties": false,
@@ -7263,6 +9396,50 @@
           "const": "intermediate"
         }
       ]
+    },
+    "TlsSessionCache": {
+      "description": "The in-memory session cache of a TLS listener.",
+      "type": "object",
+      "properties": {
+        "size": {
+          "description": "Sessions kept (0 turns the cache off). Default 256, rustls's default.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 256,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "TlsTickets": {
+      "description": "TLS session tickets. A ticket lets a returning client skip the full handshake. Listeners\nshare ticket keys only when their TLS policy, client authentication (mode and CA\ncertificates), certificate scope and these settings are equal, so a session from a listener\nwithout client authentication can never be resumed on one that requires it. 0-RTT (early\ndata) is never accepted.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Issue and accept tickets.",
+          "type": "boolean",
+          "default": true
+        },
+        "key_file": {
+          "description": "Keys you provide, to share tickets between instances: one or more 32-byte keys in base64,\none per line (`openssl rand -base64 32`), the first current, the others still accepted.\nThe file must not be readable by the group or others, is read again when it changes, and\nrotating it is then your job (a warning when it is older than 24 hours). Without it, keys\nare generated, live in memory only and are handed to the next process in a binary\nupgrade.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rotate": {
+          "description": "How often a new ticket key is made; the previous key still decrypts for one more\ninterval, so tickets live at most twice this (announced to clients, capped at 7 days by\nRFC 8446 §4.6.1). Default 6h, rustls's own default; at most 84h.",
+          "$ref": "#/$defs/Duration",
+          "default": "6h"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "TokenEndpointAuth": {
       "description": "Token endpoint client authentication (OpenID Connect Core §9).",
@@ -7749,6 +9926,38 @@
           "const": "allow"
         }
       ]
+    },
+    "Upgrade": {
+      "description": "In-place binary upgrades (H-PERF-04, ADR-0031): `rdock upgrade` on the admin Unix socket or\n`SIGUSR2` hands the listeners to a new process, which serves once it is ready; this one\ndrains and exits. Linux only; refused when rdock is PID 1 (replace the container instead).",
+      "type": "object",
+      "properties": {
+        "binary": {
+          "description": "The binary `SIGUSR2` and `rdock upgrade` without `--binary` run. Default\n`/usr/local/bin/rdock`, where the systemd unit and the release image install it. It\nmust be a regular file owned by root or rdock's user and not writable by the group or\nothers, in a directory with the same owners that the group and others cannot write to\n(unless it is sticky, like /tmp).",
+          "type": "string",
+          "default": "/usr/local/bin/rdock"
+        },
+        "drain": {
+          "description": "How long the old process may still serve its open connections (HTTP/1 keep-alive is\nswitched off and HTTP/2 clients get GOAWAY at once); the rest are closed then. Default\n10m (Envoy's drain time); `unlimited` waits for every connection, which keeps an old,\npossibly vulnerable binary serving for as long as a client holds a connection.",
+          "$ref": "#/$defs/DrainLimit",
+          "default": "10m"
+        },
+        "start_timeout": {
+          "description": "How long the new process may take to report that it is ready, and then that it serves;\notherwise the old process resumes and the upgrade fails. Default 30s.",
+          "$ref": "#/$defs/Duration",
+          "default": "30s"
+        },
+        "trusted_keys": {
+          "description": "minisign public keys (`RWQ…`); when set, `<binary>.minisig` must be a valid signature of\nthe binary by one of them.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "UpstreamTls": {
       "description": "TLS to backends.",

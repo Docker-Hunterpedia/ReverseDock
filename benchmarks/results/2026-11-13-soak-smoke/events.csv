@@ -1,0 +1,17 @@
+kind,start,end,ok,detail
+start,1794597826.1,1794597826.1,1,"pid 6889, rate 400.0/s, 600 s"
+reload,1794597916.1,1794597916.1,1,"generation 1: HTTP 200, answering 1"
+upgrade,1794597976.1,1794597976.1,1,"HTTP 200, pid 6889 -> 7083, serving 7083"
+held_check,1794597976.1,1794597988.1,1,mid-drain: WebSocket and event stream still delivering
+held_check,1794597976.1,1794598006.2,1,drain end: sse closed 30.0 s after the swap; ws closed 30.0 s after the swap
+handover_check,1794597976.1,1794598007.4,1,old pid exited: True; new held connections open: True
+reload,1794598007.4,1794598007.4,1,"generation 2: HTTP 200, answering 2"
+reload,1794598096.4,1794598096.4,1,"generation 3: HTTP 200, answering 3"
+upgrade,1794598126.4,1794598126.5,1,"HTTP 200, pid 7083 -> 7308, serving 7308"
+held_check,1794598126.5,1794598138.5,1,mid-drain: WebSocket and event stream still delivering
+held_check,1794598126.5,1794598156.5,1,drain end: sse closed 30.0 s after the swap; ws closed 30.0 s after the swap
+handover_check,1794598126.5,1794598157.8,1,old pid exited: True; new held connections open: True
+reload,1794598186.8,1794598186.8,1,"generation 4: HTTP 200, answering 4"
+reload,1794598276.8,1794598276.8,1,"generation 5: HTTP 200, answering 5"
+reload,1794598366.8,1794598366.8,1,"generation 6: HTTP 200, answering 6"
+end,1794598426.1,1794598426.1,1,

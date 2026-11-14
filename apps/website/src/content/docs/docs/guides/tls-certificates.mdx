@@ -179,6 +179,48 @@ Let's Encrypt or any ACME CA, with HTTP-01, TLS-ALPN-01 or DNS-01, renewed throu
 
 `localhost`, names under `.internal`, `.home.arpa` and the other reserved suffixes, and private addresses get their certificates from ReverseDock's local CA instead of ACME <Status since="v0.3" />. See [HTTPS for localhost and private names](/docs/guides/local-development/).
 
+## Session resumption <Status planned="v0.9" />
+
+A returning client can skip the full handshake with a session ticket. ReverseDock issues
+tickets on every TLS listener by default and keeps one set of ticket keys per **security
+class**: listeners whose TLS policy, client authentication (mode and CA certificates),
+certificate scope (`tls.certificates`) and resumption settings are equal share keys, so a
+ticket from one is accepted by the others. A session started on a listener without client
+authentication is never resumed on one that requires a client certificate: they are different
+classes, as rustls warns they must be. The keys are kept across reloads (a rebuilt TLS
+configuration keeps them) and handed to the new process in a
+[binary upgrade](/docs/guides/upgrades/).
+
+```yaml title="rdock.yaml (excerpt)"
+listeners:
+  websecure:
+    address: ":443"
+    tls:
+      tickets:
+        enabled: true      # the default
+        rotate: 6h         # the default, rustls's own
+        # key_file: /etc/rdock/ticket.keys
+      session_cache:
+        size: 256          # the default
+```
+
+- `rotate`: a new key is made every interval; the previous one still decrypts for one more
+  interval, so a ticket lives at most twice `rotate`, which is also the lifetime announced to
+  clients (at most 7 days, RFC 8446 §4.6.1). Between 1s and 84h.
+- `enabled: false` issues no tickets: TLS 1.3 clients then always do a full handshake, and TLS
+  1.2 clients can still resume by session ID from `session_cache`.
+- `session_cache.size`: sessions kept in memory for resumption by session ID (0 turns it off).
+- `key_file`: keys you provide, to share tickets between instances behind one load balancer.
+  One or more 32-byte keys in base64, one per line (`openssl rand -base64 32`); the first is
+  current, the others are still accepted. The file must not be readable by the group or others
+  (`chmod 600`; otherwise the configuration is refused), is read again when it changes, and
+  rotating it is then your job: rdock warns when it has not changed for 24 hours. Without it the
+  keys are random, live in memory only and are never written to disk.
+
+0-RTT (TLS 1.3 early data) is never accepted: early data is not forward secret and can be
+replayed (RFC 8446 §2.3, §8), and a proxy cannot know which requests are safe to replay. There
+is no setting that turns it on.
+
 ## Related
 
 - [HTTPS for localhost and private names](/docs/guides/local-development/)

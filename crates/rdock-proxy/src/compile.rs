@@ -9,14 +9,15 @@ use std::sync::Arc;
 
 use arc_swap::{ArcSwap, ArcSwapOption};
 use rdock_balancer::{
-    Balancer, EjectPolicy, HashRing, ProbePolicy, Registry, RoundRobin, StickyKeys,
+    Balancer, EjectPolicy, HashRing, PeakEwma, ProbePolicy, Registry, RoundRobin, StickyKeys,
 };
 use rdock_middleware::{BuildEnv, HttpClient, Middleware, ServiceClient};
 use rdock_model::config::{Config, Listener, ListenerProtocol};
 use rdock_model::diagnostics::{Diagnostic, path_key};
 use rdock_model::route::{MatchSpec, Route, RouteTls, TlsMode};
 use rdock_model::service::{
-    Backend, Health, HealthMethod, LbPolicy, SameSite, Service, Sticky, WhenAllDown,
+    Backend, Health, HealthMethod, LbPolicy, LocalityMode, SameSite, Service, SlowStartOn, Sticky,
+    WhenAllDown,
 };
 use rdock_model::values::{BackendAddress, TrustedProxy};
 use rdock_observability::AccessLog;
@@ -27,8 +28,9 @@ use crate::forwarded::{ClientIpPolicy, CloudflareRanges};
 use crate::gate::{self, Mode};
 use crate::router::{HostSet, Rule};
 use crate::runtime::{
-    ActiveCheck, BackendRuntime, Endpoint, HashOn, HealthRuntime, HttpsRedirect, ListenerRuntime,
-    MirrorRuntime, PassiveCheck, RouteRuntime, Runtime, ServiceRuntime, StickyRuntime, UpstreamTls,
+    ActiveCheck, AddressGuard, BackendRuntime, Endpoint, Failover, HashOn, HealthRuntime,
+    HttpsRedirect, ListenerRuntime, MirrorRuntime, PassiveCheck, PeakRuntime, RouteRuntime,
+    Runtime, Selection, ServiceRuntime, StickyRuntime, UpstreamTls,
 };
 use crate::upstream::{Dns, ServiceFetcher};
 
@@ -60,6 +62,11 @@ pub struct CompileEnv<'a> {
     pub metrics: Option<&'a rdock_observability::Metrics>,
     /// Quota counters that outlive a configuration; `None` when validating.
     pub quotas: Option<&'a rdock_limits::quota::QuotaRegistry>,
+    /// Abuse counters and bans that outlive a configuration; `None` when validating.
+    pub abuse: Option<&'a rdock_limits::abuse::AbuseRegistry>,
+    /// Budgets of cluster-scoped limits that outlive a configuration; `None` when validating
+    /// (limits then count per instance).
+    pub shared_limits: Option<&'a rdock_limits::shared::SharedLimits>,
 }
 
 /// The result of compilation.
@@ -82,6 +89,7 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
     let tracer = tracer(config, env, &mut out);
     let middlewares = build_middlewares(config, &services, env, &mut out);
     let caches = resolve_caches(config, env, &mut out);
+    let geoip = load_geoip(config, env, &mut out);
     let mut auto_tls = AutoTls {
         certs: &index,
         acme: config.effective_acme().is_some(),
@@ -100,11 +108,19 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
             stores: &caches,
             required: env.mode == Mode::Run && env.caches.is_some(),
         },
+        geoip.as_ref(),
         &mut out,
     );
-    crate::tcp::compile_tcp(config, env, &mut listeners, &mut auto_tls, &mut out);
-    let udp_pools = crate::udp::compile_udp(config, env, &mut listeners, &mut out);
-    let cert_requests = auto_tls.requests.into_iter().collect();
+    crate::tcp::compile_tcp(
+        config,
+        env,
+        &mut listeners,
+        &mut auto_tls,
+        geoip.as_ref(),
+        &mut out,
+    );
+    let udp_pools = crate::udp::compile_udp(config, env, &mut listeners, geoip.as_ref(), &mut out);
+    let cert_requests = CertRequest::merge_shared_first_names(auto_tls.requests);
     let local_cert_names = auto_tls.local.into_iter().collect();
     let metering = start_metering(config, env, &mut out);
     let runtime = (!out.iter().any(Diagnostic::is_error)).then(|| Runtime {
@@ -129,10 +145,59 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
         tracer,
         errors: config.defaults.errors.format,
         metering,
+        geoip,
+        geoip_log: config.geoip.as_ref().map(|g| g.log).unwrap_or_default(),
+        fingerprint_headers: fingerprint_headers(config),
     });
     Compiled {
         runtime,
         diagnostics: out,
+    }
+}
+
+/// The fingerprint header names of every listener, lower-case and once each.
+fn fingerprint_headers(config: &Config) -> Arc<[String]> {
+    let mut names: Vec<String> = config
+        .listeners
+        .values()
+        .filter_map(|l| l.tls.as_ref()?.fingerprint.as_ref())
+        .flat_map(|f| [f.header.as_ref(), f.ja3_header.as_ref()])
+        .flatten()
+        .map(|h| h.to_ascii_lowercase())
+        .collect();
+    names.sort();
+    names.dedup();
+    names.into()
+}
+
+/// The GeoIP databases of `geoip`, reusing the running ones whose files did not change. A
+/// database that cannot be loaded is an error only when something needs it.
+fn load_geoip(
+    config: &Config,
+    env: &CompileEnv<'_>,
+    out: &mut Vec<Diagnostic>,
+) -> Option<Arc<crate::geoip::GeoIp>> {
+    let settings = config.geoip.as_ref()?;
+    if settings.database.is_none() && settings.asn_database.is_none() {
+        return None;
+    }
+    let previous = env.previous.and_then(|r| r.geoip.as_deref());
+    match crate::geoip::GeoIp::load(settings, previous, std::time::SystemTime::now()) {
+        Ok(loaded) => {
+            for warning in loaded.warnings {
+                out.push(Diagnostic::warning("geoip", warning));
+            }
+            if let Some(metrics) = env.metrics {
+                for (role, db) in loaded.geoip.databases() {
+                    metrics.set_geoip_build(role, db.build_epoch);
+                }
+            }
+            Some(loaded.geoip)
+        }
+        Err(message) => {
+            out.push(Diagnostic::error("geoip", message));
+            None
+        }
     }
 }
 
@@ -306,12 +371,13 @@ fn compile_services(
     let mut services = HashMap::new();
     let mut depth: HashMap<String, usize> = HashMap::new();
     let mut pending: Vec<(&String, &Service)> = Vec::new();
+    check_zone(config, out);
     for (name, service) in &config.services {
         if !service.split.is_empty() {
             pending.push((name, service));
             continue;
         }
-        match compile_service(name, service, Vec::new(), env) {
+        match compile_service(name, service, Vec::new(), config, env) {
             Ok(runtime) => {
                 services.insert(name.clone(), Arc::new(runtime));
                 depth.insert(name.clone(), 0);
@@ -344,7 +410,7 @@ fn compile_services(
                     format!("splits are nested more than {MAX_SPLIT_DEPTH} levels deep"),
                 ));
             } else {
-                match compile_service(name, service, targets, env) {
+                match compile_service(name, service, targets, config, env) {
                     Ok(runtime) => {
                         services.insert((*name).clone(), Arc::new(runtime));
                         depth.insert((*name).clone(), level);
@@ -367,10 +433,52 @@ fn compile_services(
     services
 }
 
+/// The proxy's own zone: `locality.zone`, else the `RDOCK_ZONE` environment variable.
+pub(crate) fn own_zone(config: &Config) -> Option<Arc<str>> {
+    config
+        .locality
+        .as_ref()
+        .and_then(|l| l.zone.clone())
+        .or_else(|| std::env::var("RDOCK_ZONE").ok())
+        .map(|z| z.trim().to_owned())
+        .filter(|z| !z.is_empty())
+        .map(Arc::from)
+}
+
+/// The zone whose backends a service prefers: the own zone when the service's mode (or else
+/// the top-level mode) is `prefer`.
+pub(crate) fn preferred_zone(config: &Config, mode: Option<LocalityMode>) -> Option<Arc<str>> {
+    let mode = mode.unwrap_or_else(|| config.locality.as_ref().map(|l| l.mode).unwrap_or_default());
+    (mode == LocalityMode::Prefer)
+        .then(|| own_zone(config))
+        .flatten()
+}
+
+/// `prefer` without a zone is a warning: it has no effect.
+fn check_zone(config: &Config, out: &mut Vec<Diagnostic>) {
+    let global = config.locality.as_ref().map(|l| l.mode).unwrap_or_default();
+    let any_prefer = global == LocalityMode::Prefer
+        || config.services.values().any(|s| {
+            s.locality
+                .as_ref()
+                .is_some_and(|l| l.mode == LocalityMode::Prefer)
+        });
+    if any_prefer && own_zone(config).is_none() {
+        out.push(
+            Diagnostic::warning(
+                "locality.zone",
+                "`locality: prefer` needs the proxy's zone, and none is known; zones are ignored",
+            )
+            .with_hint("set `locality.zone` or the RDOCK_ZONE environment variable"),
+        );
+    }
+}
+
 fn compile_service(
     name: &str,
     service: &Service,
     split: Vec<(Arc<ServiceRuntime>, u32)>,
+    config: &Config,
     env: &CompileEnv<'_>,
 ) -> Result<ServiceRuntime, String> {
     let backends = compile_backends(&service.backends, env.dns);
@@ -393,11 +501,21 @@ fn compile_service(
         tls.and_then(|t| t.cert_file.as_ref()),
     )
         .hash(&mut hasher);
+    // A rotated client certificate or CA bundle (same paths, new contents) gets new pooled
+    // connections instead of reusing ones made with the previous identity.
+    if let Some(cert) = &client_cert {
+        cert.leaf().borrow_raw_cert().hash(&mut hasher);
+    }
+    if let Some(ca) = &ca {
+        for root in ca.iter() {
+            root.borrow_raw_cert().hash(&mut hasher);
+        }
+    }
     Ok(ServiceRuntime {
         name: Arc::from(name),
         scheme: service.scheme,
         backends,
-        balancer: balancer(service.load_balancer.policy),
+        balancer: balancer(service),
         hash_on: hash_on(service),
         sticky: match &service.sticky {
             Some(sticky) => Some(compile_sticky(sticky, env.sticky_key)?),
@@ -423,7 +541,46 @@ fn compile_service(
             group_key: hasher.finish(),
         },
         pass_host_header: service.pass_host_header,
+        selection: Selection {
+            failover: match service.failover {
+                rdock_model::service::Failover::Strict => Failover::Strict,
+                rdock_model::service::Failover::Spill => {
+                    Failover::Spill(service.overprovisioning.map_or(
+                        rdock_balancer::DEFAULT_OVERPROVISIONING,
+                        rdock_model::values::Factor::get,
+                    ))
+                }
+            },
+            zone: preferred_zone(config, service.locality.as_ref().map(|l| l.mode)),
+            peak: (service.load_balancer.policy == LbPolicy::PeakEwma).then(|| PeakRuntime {
+                decay: peak_decay(service),
+                measure: service.load_balancer.measure.unwrap_or_default(),
+            }),
+        },
+        allowed: address_guard(name, config, env),
     })
+}
+
+/// The address policy of `name` when a tenant owns it (an API object under its prefix):
+/// compiled once here, so the data plane checks resolved addresses without knowing tenants.
+fn address_guard(name: &str, config: &Config, env: &CompileEnv<'_>) -> Option<AddressGuard> {
+    let bare = name.strip_suffix("@api")?;
+    let (_, tenant) = rdock_model::tenant::owner(&config.tenants, bare)?;
+    Some(AddressGuard {
+        policy: Arc::new(rdock_model::addresses::BackendPolicy::of(
+            &tenant.backend_networks,
+        )),
+        refused: env
+            .metrics
+            .map(|m| m.backend_addresses_refused.with_label_values(&[name])),
+    })
+}
+
+fn peak_decay(service: &Service) -> std::time::Duration {
+    service.load_balancer.decay.map_or(
+        PeakEwma::default().decay,
+        rdock_model::values::Duration::as_std,
+    )
 }
 
 /// Backends as configured, with name resolution cells for DNS names.
@@ -456,13 +613,21 @@ pub(crate) fn compile_backends(backends: &[Backend], dns: &Dns) -> Vec<BackendRu
                 },
             },
             weight: b.weight,
-            backup: b.backup,
+            priority: b.tier().min(crate::runtime::MAX_TIER),
+            zones: if b.for_zones.is_empty() {
+                b.zone.iter().map(|z| Arc::from(z.as_str())).collect()
+            } else {
+                b.for_zones.iter().map(|z| Arc::from(z.as_str())).collect()
+            },
         })
         .collect()
 }
 
-fn balancer(policy: LbPolicy) -> Balancer {
-    match policy {
+fn balancer(service: &Service) -> Balancer {
+    match service.load_balancer.policy {
+        LbPolicy::PeakEwma => Balancer::PeakEwma(PeakEwma {
+            decay: peak_decay(service),
+        }),
         LbPolicy::RoundRobin => Balancer::RoundRobin(RoundRobin::default()),
         LbPolicy::Random => Balancer::Random,
         LbPolicy::LeastConn | LbPolicy::LeastRequests => Balancer::LeastRequests,
@@ -521,15 +686,46 @@ fn compile_health(health: Option<&Health>) -> Result<HealthRuntime, String> {
             failures: p.failures,
             window: p.window.as_std(),
             ejection: p.ejection.as_std(),
+            jitter: p.ejection_jitter.as_std(),
         },
         statuses: p.statuses.clone(),
         max_percent: p.max_ejection_percent,
+        outlier: p.outlier.as_ref().and_then(|o| {
+            let detectors =
+                rdock_balancer::Outlier {
+                    success_rate: o.success_rate.as_ref().filter(|d| d.enabled).map(|d| {
+                        rdock_balancer::SuccessRate {
+                            stdev_factor: d.stdev_factor.get(),
+                            minimum_hosts: d.minimum_hosts,
+                            request_volume: d.request_volume,
+                        }
+                    }),
+                    failure_percentage: o.failure_percentage.as_ref().filter(|d| d.enabled).map(
+                        |d| rdock_balancer::FailurePercentage {
+                            threshold: d.threshold,
+                            minimum_hosts: d.minimum_hosts,
+                            request_volume: d.request_volume,
+                        },
+                    ),
+                };
+            let any = detectors.success_rate.is_some() || detectors.failure_percentage.is_some();
+            any.then(|| (detectors, o.interval.as_std()))
+        }),
     });
     Ok(HealthRuntime {
         active,
         passive,
         fail_open: health.when_all_down == WhenAllDown::FailOpen,
-        slow_start: health.slow_start.map(rdock_model::values::Duration::as_std),
+        slow_start: health.slow_start.as_ref().map(|s| {
+            let c = s.config();
+            rdock_balancer::SlowStart {
+                window: c.window.as_std(),
+                aggression: c.aggression.get(),
+                min_weight_percent: c.min_weight_percent,
+                on_recovery: c.on.contains(&SlowStartOn::Recovery),
+                on_join: c.on.contains(&SlowStartOn::Join),
+            }
+        }),
     })
 }
 
@@ -615,6 +811,17 @@ fn build_middlewares(
         consumers,
         quotas: env.quotas,
         route_hosts: Arc::new(route_hosts(config)),
+        abuse: env.abuse,
+        shared_limits: env.shared_limits,
+        trusted_proxies: config
+            .security
+            .trusted_proxies
+            .iter()
+            .filter_map(|p| match p {
+                rdock_model::values::TrustedProxy::Network(n) => Some(*n),
+                rdock_model::values::TrustedProxy::Cloudflare => None,
+            })
+            .collect(),
     };
     let mut built = HashMap::new();
     for (name, middleware) in &config.middlewares {
@@ -714,19 +921,44 @@ const CATCH_ALL: [&str; 2] = ["PathPrefix(`/`)", "Host(`*`)"];
 
 /// Warns about routes that can never match because an earlier route on the same listener has
 /// the same rule or matches everything (M-RT-02).
-fn report_shadowed(listener: &str, routes: &[Arc<RouteRuntime>], out: &mut Vec<Diagnostic>) {
+///
+/// A tenant's route is told only that another route comes first: the name of a route outside
+/// the tenant, and the listener's, are not the tenant's to know.
+fn report_shadowed(
+    listener: &str,
+    routes: &[Arc<RouteRuntime>],
+    tenants: &rdock_model::tenant::Tenants,
+    out: &mut Vec<Diagnostic>,
+) {
+    let owner = |name: &str| {
+        name.strip_suffix("@api")
+            .and_then(|bare| rdock_model::tenant::owner(tenants, bare))
+            .map(|(t, _)| t)
+    };
     for (i, route) in routes.iter().enumerate() {
         let earlier = routes[..i]
             .iter()
             .find(|e| e.expr == route.expr || CATCH_ALL.contains(&e.expr.as_str()));
         if let Some(earlier) = earlier {
+            let tenant = owner(&route.name);
+            let message = if tenant.is_some() && owner(&earlier.name) != tenant {
+                "this route never matches: another route comes first and matches the same requests"
+                    .to_owned()
+            } else if tenant.is_some() {
+                format!(
+                    "this route never matches: route `{}` comes first and matches the same requests",
+                    earlier.name
+                )
+            } else {
+                format!(
+                    "this route never matches on listener `{listener}`: route `{}` comes first and matches the same requests",
+                    earlier.name
+                )
+            };
             out.push(
                 Diagnostic::warning(
                     format!("{}.match", path_key("routes", &route.name)),
-                    format!(
-                        "this route never matches on listener `{listener}`: route `{}` comes first and matches the same requests",
-                        earlier.name
-                    ),
+                    message,
                 )
                 .with_hint("give this route a higher `priority`, or make its rule more specific"),
             );
@@ -795,6 +1027,7 @@ fn compile_listeners(
     scoped: &HashMap<String, Arc<CertIndex>>,
     rings: &rdock_observability::live::Rings,
     caches: &Caches<'_>,
+    geoip: Option<&Arc<crate::geoip::GeoIp>>,
     out: &mut Vec<Diagnostic>,
 ) -> BTreeMap<String, ListenerRuntime> {
     let effective = config.effective_listeners();
@@ -824,6 +1057,18 @@ fn compile_listeners(
             live: rings.ring(name),
             caches,
             errors: config.defaults.errors.format,
+            geoip,
+            tenant_max_body: name
+                .strip_suffix("@api")
+                .and_then(|bare| rdock_model::tenant::owner(&config.tenants, bare))
+                .map(|(_, tenant)| {
+                    let cap = tenant.limits.max_body;
+                    config
+                        .security
+                        .limits
+                        .max_body_bytes
+                        .map_or(cap, |global| global.min(cap))
+                }),
         };
         let Some(compiled) = compile_route(name, route, (&expr, length), &context, out) else {
             continue;
@@ -857,7 +1102,9 @@ fn compile_listeners(
                 .cmp(&a.priority)
                 .then_with(|| a.name.cmp(&b.name))
         });
-        report_shadowed(&listener.name, &listener.routes, out);
+        report_shadowed(&listener.name, &listener.routes, &config.tenants, out);
+        listener.route_index =
+            crate::router::RouteIndex::build(listener.routes.iter().map(|r| &r.rule));
         if listener.protocol == ListenerProtocol::Http
             && !is_provider_listener(&listener.name)
             && config.defaults.redirect_http_to_https
@@ -879,10 +1126,36 @@ fn is_provider_listener(name: &str) -> bool {
 
 fn new_listener(name: &str, listener: &Listener) -> Result<ListenerRuntime, String> {
     let tls = match &listener.tls {
-        Some(tls) => Some(crate::runtime::ListenerTls {
-            policy: tls.policy,
-            client_auth: tls.client_auth.as_ref().map(client_auth).transpose()?,
-        }),
+        Some(tls) => {
+            let tickets = tls.tickets();
+            let file_keys = match (&tickets.key_file, tickets.enabled) {
+                (Some(path), true) => {
+                    let (keys, age) =
+                        rdock_tls::tickets::read_key_file(path).map_err(|e| e.to_string())?;
+                    if age.is_some_and(|a| a > rdock_tls::tickets::KEY_FILE_MAX_AGE) {
+                        tracing::warn!(
+                            listener = name,
+                            file = %path.display(),
+                            "the ticket key file has not changed for more than 24 hours; with `key_file` rotating the keys is your job"
+                        );
+                    }
+                    Some(keys)
+                }
+                _ => None,
+            };
+            Some(crate::runtime::ListenerTls {
+                policy: tls.policy,
+                client_auth: tls.client_auth.as_ref().map(client_auth).transpose()?,
+                resumption: rdock_tls::ResumptionSettings {
+                    tickets: tickets.enabled,
+                    rotate: tickets.rotate.as_std(),
+                    key_file: tickets.key_file.filter(|_| tickets.enabled),
+                    cache_size: usize::try_from(tls.session_cache().size).unwrap_or(usize::MAX),
+                },
+                scope: (!tls.certificates.is_empty()).then(|| name.to_owned()),
+                file_keys,
+            })
+        }
         None => None,
     };
     Ok(ListenerRuntime {
@@ -892,9 +1165,22 @@ fn new_listener(name: &str, listener: &Listener) -> Result<ListenerRuntime, Stri
         starttls: listener.starttls,
         tls,
         timeouts: listener.timeouts,
+        socket: listener.socket(),
+        max_handshakes: listener.tls.as_ref().and_then(|t| t.max_handshakes),
+        http2: listener.http2.unwrap_or_default(),
+        fingerprint: listener
+            .tls
+            .as_ref()
+            .and_then(|t| t.fingerprint.clone())
+            .filter(|_| listener.effective_protocol() == ListenerProtocol::Https),
+        http3: listener
+            .http3
+            .clone()
+            .filter(|h3| h3.enabled && listener.effective_protocol() == ListenerProtocol::Https),
         proxy_protocol: listener.proxy_protocol.clone(),
         ping: listener.ping.clone(),
         routes: Vec::new(),
+        route_index: crate::router::RouteIndex::default(),
         tcp_routes: Arc::new([]),
         udp_routes: Arc::new([]),
         udp_sessions: listener.sessions.unwrap_or_default(),
@@ -933,6 +1219,11 @@ struct RouteContext<'a> {
     caches: &'a Caches<'a>,
     /// `defaults.errors.format`.
     errors: rdock_model::config::ErrorFormat,
+    /// GeoIP databases for the rule's matchers.
+    geoip: Option<&'a Arc<crate::geoip::GeoIp>>,
+    /// The body ceiling of the tenant owning the route (`tenants.<t>.limits.max_body`, or
+    /// `security.limits.max_body_bytes` when smaller), if a tenant owns it.
+    tenant_max_body: Option<rdock_model::values::ByteSize>,
 }
 
 /// The route's cache policy from its `cache` middleware, if it has one.
@@ -980,7 +1271,7 @@ fn compile_route(
 ) -> Option<Arc<RouteRuntime>> {
     let (services, middlewares) = (context.services, context.middlewares);
     let path = path_key("routes", name);
-    let rule = match Rule::compile(expr) {
+    let rule = match Rule::compile_with(expr, context.geoip) {
         Ok(rule) => rule,
         Err(e) => {
             out.push(Diagnostic::error(format!("{path}.match"), e.to_string()));
@@ -1045,10 +1336,16 @@ fn compile_route(
     Some(Arc::new(RouteRuntime {
         name: Arc::from(name),
         priority,
+        priority_class: route.priority_class,
         rule,
         service,
         expr: expr.to_string(),
-        max_body: route.max_body,
+        // A tenant's route never accepts more than its tenant's ceiling (validation refuses a
+        // larger `max_body`; this fills in the default).
+        max_body: match (route.max_body, context.tenant_max_body) {
+            (Some(own), Some(cap)) => Some(own.min(cap)),
+            (own, cap) => own.or(cap),
+        },
         grpc_web: chain.translates_grpc_web(),
         middlewares: chain,
         timeouts: route.timeouts,

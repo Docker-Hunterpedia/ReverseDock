@@ -1,0 +1,217 @@
+{
+  "meta": {
+    "started": 1794597826.0551472,
+    "finished": 1794598426.0558808,
+    "duration": 600,
+    "rate": 400.0,
+    "sample_every": 10.0,
+    "reload_every": 90,
+    "upgrade_every": 150,
+    "upgrade_until": 0.7,
+    "drain": 30,
+    "label": "mimalloc",
+    "rdock_version": "rdock 0.8.0-alpha.1\ncommit  dev\nrustc   rustc 1.99.1 (58cf8f9c3 2026-10-13)\ntarget  x86_64-unknown-linux-gnu\nplugin API 0.1.0; plugins: none\nWASM plugins: not in this build\nHTTP/3: not in this build",
+    "binary_sha256": "490abfea394a781f1e36dc2be839f3a68ba1d241641f45f2ce11e929630c1427",
+    "machine": {
+      "cpus": 4,
+      "mem_mib": 16086,
+      "kernel": "6.18.44-fc-v445",
+      "python": "3.13.18"
+    }
+  },
+  "checks": [
+    {
+      "name": "The run completed",
+      "measured": "10.0 of 10.0 min, rdock down 0x",
+      "limit": "\u2265 98 % of the time, rdock never down",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "name": "Samples taken",
+      "measured": "60 of 60",
+      "limit": "\u2265 85 %",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "name": "Failed requests outside upgrade and reload windows",
+      "measured": "0 of 207,978",
+      "limit": "\u2264 2 (0.001 %)",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "name": "Failed requests inside upgrade and reload windows",
+      "measured": "0 of 32,000",
+      "limit": "\u2264 0 (0.001 %)",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "name": "Stale kept-alive connections retried (information)",
+      "measured": "4",
+      "limit": "not limited",
+      "status": "pass",
+      "note": "an idle connection the server closed before the client's next request; retried once, as a client does"
+    },
+    {
+      "name": "Binary upgrades",
+      "measured": "2 ok of 2",
+      "limit": "all ok, at least 2",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "name": "Held WebSocket and event stream across upgrades",
+      "measured": "6 ok of 6 checks",
+      "limit": "all ok: kept while the old process drains, closed when its drain ends, old process gone",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "name": "Configuration reloads",
+      "measured": "6 ok of 6",
+      "limit": "all ok, at least 2",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "name": "Panics in the log",
+      "measured": "0",
+      "limit": "0",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "name": "Rejected configurations in the log",
+      "measured": "0",
+      "limit": "0",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "name": "Memory (PSS) does not grow",
+      "measured": "longest process: +1.0 MiB over 3.7 min, +395.1 MiB projected in 24 h; 0 of 1 processes flagged",
+      "limit": "projection over 24 h \u2264 10 % of the level, or last-quartile median within max(1 MiB, 1 %) of the second",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "name": "Open file descriptors does not grow",
+      "measured": "longest process: +2.8 over 3.7 min, +1080.0 projected in 24 h; 0 of 1 processes flagged",
+      "limit": "no sustained rise",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "name": "Threads does not grow",
+      "measured": "longest process: +0.0 over 3.7 min, +0.0 projected in 24 h; 0 of 1 processes flagged",
+      "limit": "no sustained rise",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "name": "Latency does not drift",
+      "measured": "median p99 2.6 ms in the first quarter, 2.7 ms in the last",
+      "limit": "last \u2264 3 x first + 5 ms",
+      "status": "pass",
+      "note": ""
+    }
+  ],
+  "requests": 239978,
+  "failures": 0,
+  "upgrades": 2,
+  "reloads": 6,
+  "processes": [
+    "6889",
+    "7083",
+    "7308"
+  ],
+  "trends": {
+    "mem": [
+      {
+        "pid": "6889",
+        "span_s": 150.0,
+        "samples": 10,
+        "judged": false
+      },
+      {
+        "pid": "7083",
+        "span_s": 140.0,
+        "samples": 9,
+        "judged": false
+      },
+      {
+        "pid": "7308",
+        "span_s": 280.0,
+        "samples": 23,
+        "judged": true,
+        "level": 90948.0,
+        "slope_per_s": 4.682352941176471,
+        "delta": 214.0,
+        "window_s": 220.0,
+        "projected_24h": 404555.2941176471,
+        "rise_in_window": 1030.1176470588236,
+        "flagged": false
+      }
+    ],
+    "fds": [
+      {
+        "pid": "6889",
+        "span_s": 150.0,
+        "samples": 10,
+        "judged": false
+      },
+      {
+        "pid": "7083",
+        "span_s": 140.0,
+        "samples": 9,
+        "judged": false
+      },
+      {
+        "pid": "7308",
+        "span_s": 280.0,
+        "samples": 23,
+        "judged": true,
+        "level": 41.0,
+        "slope_per_s": 0.0125,
+        "delta": 3.0,
+        "window_s": 220.0,
+        "projected_24h": 1080.0,
+        "rise_in_window": 2.75,
+        "flagged": false
+      }
+    ],
+    "threads": [
+      {
+        "pid": "6889",
+        "span_s": 150.0,
+        "samples": 10,
+        "judged": false
+      },
+      {
+        "pid": "7083",
+        "span_s": 140.0,
+        "samples": 9,
+        "judged": false
+      },
+      {
+        "pid": "7308",
+        "span_s": 280.0,
+        "samples": 23,
+        "judged": true,
+        "level": 16.0,
+        "slope_per_s": 0.0,
+        "delta": 0.0,
+        "window_s": 220.0,
+        "projected_24h": 0.0,
+        "rise_in_window": 0.0,
+        "flagged": false
+      }
+    ]
+  },
+  "warmup": 60.0,
+  "min_tail": 120.0,
+  "exit": 0
+}

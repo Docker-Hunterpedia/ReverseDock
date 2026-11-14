@@ -2,7 +2,7 @@
 title: middlewares
 description: "Reusable request and response policies."
 sidebar:
-  order: 9
+  order: 13
 ---
 
 import Status from '../../../../../components/Status.astro';
@@ -329,7 +329,7 @@ What to count by.
 
 **Type:** map of names to object
 
-Group → limit for consumers in that group, with `key: consumer`. The first of the consumer's groups (in its `groups` order) that has an override wins.
+Group → limit for consumers in that group, with `key: consumer` or `key: group`. With `consumer`, the first of the consumer's groups (in its `groups` order) that has an override wins; with `group`, the override of the primary group (the first one) applies.
 
 #### `middlewares.<name>.overrides.<name>.average`
 
@@ -354,6 +354,19 @@ Period of `average`; defaults to the middleware's.
 **Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `1s`
 
 Period of `average`.
+
+### `middlewares.<name>.scope`
+
+**Type:** `instance` · `cluster`
+
+`instance` (default) or `cluster`. With `cluster`, the cluster admits at most `average` requests per key in each `period` (fixed windows from the Unix epoch), within the bound of `cluster.limits`; each instance's own token bucket still shapes bursts.
+
+- `instance`: Each instance counts on its own: N instances admit up to N times the limit.
+- `cluster`: The instances of a cluster share the limit through `cluster.limits` (the cluster store or Redis), within a documented bound; each falls back to its share when the store is away. Without a cluster it counts per instance.
+
+:::note[Planned for a later version]
+A cluster-wide count of requests in flight (in_flight with scope: cluster): accepted by `rdock validate` with a warning, refused by `rdock run` until a later version.
+:::
 
 ## `type: in_flight`
 
@@ -382,6 +395,19 @@ Requests over the limit that wait for a slot; more get `429` at once.
 **Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `5s`
 
 How long a queued request waits before it gets `429`.
+
+### `middlewares.<name>.scope`
+
+**Type:** `instance` · `cluster`
+
+Only `instance`: a cluster-wide count of requests in flight is planned.
+
+- `instance`: Each instance counts on its own: N instances admit up to N times the limit.
+- `cluster`: The instances of a cluster share the limit through `cluster.limits` (the cluster store or Redis), within a documented bound; each falls back to its share when the store is away. Without a cluster it counts per instance.
+
+:::note[Planned for a later version]
+A cluster-wide count of requests in flight (in_flight with scope: cluster): accepted by `rdock validate` with a warning, refused by `rdock run` until a later version.
+:::
 
 ## `type: bandwidth`
 
@@ -629,6 +655,12 @@ A header; `Authorization` values must start with `Bearer `.
 
 A query parameter (tokens in URLs end up in logs; prefer a header).
 
+### `middlewares.<name>.trusted_groups`
+
+**Type:** list of `string`
+
+Groups from `groups_claim` that count for `key: group` and for group `overrides` of `rate_limit` and `quota`, as if configured. Other token groups are kept on the consumer (metering, headers) but never share a configured group's budget or override, and a consumer with only those is counted on its own.
+
 ### `middlewares.<name>.unverified_emails`
 
 **Type:** `boolean` · **Default:** `false`
@@ -643,7 +675,19 @@ Demand a verified client certificate, check its names and pass its identity on.
 
 **Type:** list of `string`
 
-Names a certificate must have one of: its common name or a DNS, URI or email SAN. `*` matches any run of characters, e.g. `*.clients.example.com`. Any name when empty.
+Names a certificate must have one of: its common name or a DNS, URI or email SAN. `*` matches any run of characters, e.g. `*.clients.example.com`. Any name when empty. The typed lists below check one field each and are safer: a URI pattern there cannot be satisfied by a common name that carries the same text.
+
+### `middlewares.<name>.dns`
+
+**Type:** list of `string`
+
+DNS SANs, one must match (`*` globs).
+
+### `middlewares.<name>.emails`
+
+**Type:** list of `string`
+
+Email SANs, one must match (`*` globs).
 
 ### `middlewares.<name>.forward`
 
@@ -655,11 +699,71 @@ Headers that pass the identity to the backend.
 - `traefik`: Traefik's `X-Forwarded-Tls-Client-Cert` (the certificate) and `X-Forwarded-Tls-Client-Cert-Info` (its fields).
 - `xfcc`: Envoy's `X-Forwarded-Client-Cert`.
 
+### `middlewares.<name>.organizations`
+
+**Type:** list of `string`
+
+Subject organizations (O), one must match (`*` globs).
+
 ### `middlewares.<name>.required`
 
 **Type:** `boolean` · **Default:** `true`
 
 Answer `403` to requests without a verified client certificate.
+
+### `middlewares.<name>.serials`
+
+**Type:** list of `string`
+
+Certificate serial numbers in hex (`0a1b…`, colons allowed), exact.
+
+### `middlewares.<name>.sha256`
+
+**Type:** list of `string`
+
+SHA-256 fingerprints of the certificate in hex (colons allowed), exact: pins.
+
+### `middlewares.<name>.spiffe`
+
+**Type:** object
+
+SPIFFE X.509-SVID rules (H-SEC-05): the certificate must be a valid SVID of one of the trust domains, and its ID one of `ids` or under one of `id_prefixes`.
+
+#### `middlewares.<name>.spiffe.consumer`
+
+**Type:** `boolean` · **Default:** `false`
+
+Make the SPIFFE ID the request's consumer (for `rate_limit` and `quota` by consumer, metering and the access log). Its issuer is `spiffe://<trust domain>`, so it never shares counters with an API-key or token consumer of the same name. Off by default.
+
+#### `middlewares.<name>.spiffe.id_prefixes`
+
+**Type:** list of `string`
+
+SPIFFE ID prefixes, matched segment by segment: `spiffe://prod.example.com/ns/web` accepts that ID and every ID below it, never `/ns/webshop`. With neither `ids` nor `id_prefixes`, any ID of the trust domains is accepted.
+
+#### `middlewares.<name>.spiffe.ids`
+
+**Type:** list of `string`
+
+SPIFFE IDs accepted exactly, e.g. `spiffe://prod.example.com/ns/web/sa/api`.
+
+#### `middlewares.<name>.spiffe.trust_domains`
+
+**Type:** list of `string`
+
+Trust domains accepted, e.g. `prod.example.com`. Required.
+
+### `middlewares.<name>.subjects`
+
+**Type:** list of `string`
+
+Subject common names, one must match (`*` globs). Every typed list that is set must match, together with `allow`.
+
+### `middlewares.<name>.uris`
+
+**Type:** list of `string`
+
+URI SANs, one must match (`*` globs).
 
 ## `type: grpc_web`
 
@@ -1299,7 +1403,7 @@ How often counters are written to disk.
 
 **Type:** [`RateLimitKey`](/docs/reference/configuration/#ratelimitkey) · **Default:** `consumer`
 
-What to count by; only `consumer` (the default) is accepted. Requests without a consumer are counted per client IP.
+What to count by: `consumer` (the default) or `group` (the consumer's primary group, the first of its `groups`: all consumers of a group share one count). Requests without a consumer are counted per client IP.
 
 ### `middlewares.<name>.limit`
 
@@ -1311,7 +1415,20 @@ Requests allowed per window.
 
 **Type:** map of names to `integer`
 
-Group → limit, for consumers in that group (the first of the consumer's groups that has one wins).
+Group → limit, for consumers in that group (with `key: consumer`, the first of the consumer's groups that has one wins; with `key: group`, the primary group's).
+
+### `middlewares.<name>.scope`
+
+**Type:** `instance` · `cluster`
+
+`instance` (default) or `cluster`: with `cluster`, the instances of a cluster share each key's quota through `cluster.limits`, within its documented bound.
+
+- `instance`: Each instance counts on its own: N instances admit up to N times the limit.
+- `cluster`: The instances of a cluster share the limit through `cluster.limits` (the cluster store or Redis), within a documented bound; each falls back to its share when the store is away. Without a cluster it counts per instance.
+
+:::note[Planned for a later version]
+A cluster-wide count of requests in flight (in_flight with scope: cluster): accepted by `rdock validate` with a warning, refused by `rdock run` until a later version.
+:::
 
 ### `middlewares.<name>.window`
 
@@ -1753,3 +1870,192 @@ Requests without a valid session: `auto` redirects page navigations (`GET`/`HEAD
 - `auto`: Redirect page navigations to the login; `401` for everything else.
 - `redirect`: Redirect every `GET` and `HEAD` to the login; `401` for other methods.
 - `deny`: Always `401`.
+
+## `type: abuse`
+
+Count abuse signals (response statuses, failed authentications) per key in a window and ban keys past a threshold for a while (H-SEC-01). Per instance; bans survive restarts and binary upgrades.
+
+### `middlewares.<name>.action`
+
+**Type:** `deny` · `tarpit` · `tag` · **Default:** `deny`
+
+What a banned key gets: `deny` (`403`, problem type `banned`, the default), `tarpit` (held for `tarpit.delay`, then denied) or `tag` (served; the access log and later middlewares see `abuse: tagged`).
+
+- `deny`: `403` with the problem type `banned`.
+- `tarpit`: Held for `tarpit.delay`, then `403`.
+- `tag`: Served; marked in the access log and for later middlewares.
+
+### `middlewares.<name>.ban`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `10m`
+
+How long a ban lasts. Default 10m.
+
+### `middlewares.<name>.events`
+
+**Type:** list of [`AbuseEvent`](/docs/reference/configuration/#abuseevent) · **Default:** `[401,403]`
+
+What counts: status codes (`401`), classes (`4xx`) and `auth_failure` (an authentication middleware refused the credentials). Default `[401, 403]`.
+
+### `middlewares.<name>.exempt`
+
+**Type:** list of [`IpNetwork`](/docs/reference/configuration/#ipnetwork) · **Default:** `["127.0.0.0/8","::1/128"]`
+
+Client networks never counted or banned. Default the loopback networks; the `security.trusted_proxies` networks are always added, so a proxy whose clients are not resolved can never ban itself, and with it everyone behind it.
+
+### `middlewares.<name>.key`
+
+**Type:** [`AbuseKey`](/docs/reference/configuration/#abusekey) · **Default:** `client_ip`
+
+What to count by: `client_ip` (the default; IPv6 by /64), `consumer`, `ja4` or `header:<Name>`. Requests without a consumer or fingerprint count by client address.
+
+### `middlewares.<name>.max_bans`
+
+**Type:** `integer` · **Default:** `10000`
+
+Bans at once. The ban list is separate from the counters and nothing evicts a ban before it ends: when it is full, new bans are refused and counted in `rdock_abuse_bans_refused_total`. Default 10000.
+
+### `middlewares.<name>.max_keys`
+
+**Type:** `integer` · **Default:** `100000`
+
+Keys counted at once; past it, the oldest counters are dropped. Default 100000.
+
+### `middlewares.<name>.tarpit`
+
+**Type:** object · **Default:** `{"delay":"5s","max_held":100}`
+
+`action: tarpit`.
+
+#### `middlewares.<name>.tarpit.delay`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `5s`
+
+How long a request is held before the `403`. Default 5s, at most 60s.
+
+#### `middlewares.<name>.tarpit.max_held`
+
+**Type:** `integer` · **Default:** `100`
+
+Requests held at once, all keys together; past it, banned requests are denied at once (holding connections costs the proxy too: HAProxy's manual warns that a tarpit "can make things worse"). Default 100.
+
+### `middlewares.<name>.threshold`
+
+**Type:** `integer` · **Default:** `20`
+
+Events within one `window` that start a ban. Default 20.
+
+### `middlewares.<name>.window`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `1m`
+
+The counting window. Default 1m.
+
+## `type: admission`
+
+An adaptive concurrency limit (H-LB-04, ADR-0031): it learns how many requests the routes using it can have in flight from their latency (`aimd` or `gradient`) and answers the rest with `503` and `Retry-After`, routes of the lowest `priority_class` first. Off unless configured.
+
+### `middlewares.<name>.backoff_percent`
+
+**Type:** `integer`
+
+`aimd` only: the limit is multiplied by this percentage on a drop (default 90, 50–99).
+
+### `middlewares.<name>.initial`
+
+**Type:** `integer`
+
+The limit at start and after a reload (default 20, Netflix's, kept within `min`–`max`).
+
+### `middlewares.<name>.interval`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration)
+
+`gradient` only: time between two measurements of the no-load latency (default 60s, the `min_rtt_calc_params.interval` of Envoy's documented example; 1s–1h).
+
+### `middlewares.<name>.jitter_percent`
+
+**Type:** `integer`
+
+`gradient` only: a random part of `interval` added to it, in percent, so instances do not measure at the same moment (default 15, Envoy's `jitter`; 0–100).
+
+### `middlewares.<name>.latency`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration)
+
+`aimd` only: a sample slower than this counts as a drop (default 5s, Netflix's `timeout`). Measured from admission to the response headers.
+
+### `middlewares.<name>.max`
+
+**Type:** `integer` · **Default:** `1000`
+
+The highest limit (default 1000, Envoy's `max_concurrency_limit`).
+
+### `middlewares.<name>.min`
+
+**Type:** `integer` · **Default:** `3`
+
+The lowest limit (default 3, Envoy's `min_concurrency`).
+
+### `middlewares.<name>.mode`
+
+**Type:** `aimd` · `gradient` · **Required**
+
+`aimd` or `gradient`.
+
+- `aimd`: Additive increase, multiplicative decrease on slow or failed samples.
+- `gradient`: The measured no-load latency against each sample's (Envoy's gradient).
+
+### `middlewares.<name>.probe`
+
+**Type:** `integer`
+
+`gradient` only: samples at `min` concurrency that make one measurement of the no-load latency (default 50, Envoy's `request_count`; 5–1000).
+
+### `middlewares.<name>.probe_timeout`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration)
+
+`gradient` only: the longest a measurement pins the limit to `min` (default 5s; 100ms–60s). When it ends early, the median of the samples it has becomes the reference; without any, the previous reference stays.
+
+### `middlewares.<name>.queue`
+
+**Type:** `integer`
+
+`gradient` only: requests allowed above the estimate (default 4, Netflix's `queueSize`).
+
+### `middlewares.<name>.retry_after`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `1s`
+
+`Retry-After` of a shed request (default 1s).
+
+### `middlewares.<name>.shares`
+
+**Type:** object · **Default:** `{"normal":90,"sheddable":75}`
+
+The share of the limit `normal` and `sheddable` routes may fill, in percent.
+
+#### `middlewares.<name>.shares.normal`
+
+**Type:** `integer` · **Default:** `90`
+
+Routes with `priority_class: normal`, in percent of the limit (default 90).
+
+#### `middlewares.<name>.shares.sheddable`
+
+**Type:** `integer` · **Default:** `75`
+
+Routes with `priority_class: sheddable`, in percent of the limit (default 75; at most `normal`).
+
+### `middlewares.<name>.smoothing_percent`
+
+**Type:** `integer`
+
+`gradient` only: the weight of a new estimate, in percent (default 20, 1–100).
+
+### `middlewares.<name>.tolerance_percent`
+
+**Type:** `integer`
+
+`gradient` only: how much slower than the no-load latency a sample may be before the limit shrinks, in percent (default 150, Netflix's `rttTolerance` 1.5; 100–1000).

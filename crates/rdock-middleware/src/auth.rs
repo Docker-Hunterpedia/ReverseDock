@@ -3,7 +3,10 @@
 //! bcrypt and argon2id are slow on purpose, and browsers send the credentials with every
 //! request, so successful checks are remembered for a few minutes under a keyed hash of the
 //! user name and password. Verification runs on the blocking thread pool so it never stalls the
-//! proxy's workers.
+//! proxy's workers, at most [`MAX_VERIFYING`] at a time across every `basic_auth` middleware:
+//! a request that finds them all busy waits up to [`VERIFY_WAIT`], then gets `503` with
+//! `Retry-After`. A hash whose cost is above the ceilings of [`rdock_model::password`] is
+//! refused when the middleware is built, from `users` and from `users_file` alike.
 
 use std::collections::{HashMap, VecDeque};
 use std::hash::{BuildHasher, RandomState};
@@ -23,6 +26,21 @@ use crate::{BuildError, Context, Flow, Middleware, Reply, hashes, read_file};
 const CACHE_TTL: Duration = Duration::from_secs(300);
 const CACHE_ENTRIES: usize = 1024;
 
+/// Most password verifications running at once, process-wide: the CPU count, at most four.
+/// With argon2id at its ceiling (256 MiB) that bounds the memory they use to 1 GiB.
+pub const MAX_VERIFYING: usize = 4;
+/// How long a request waits for a verification slot before it gets `503`.
+pub const VERIFY_WAIT: Duration = Duration::from_secs(1);
+
+/// The verification slots shared by every `basic_auth` middleware.
+fn slots() -> &'static Arc<tokio::sync::Semaphore> {
+    static SLOTS: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
+    SLOTS.get_or_init(|| {
+        let cpus = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+        Arc::new(tokio::sync::Semaphore::new(cpus.clamp(1, MAX_VERIFYING)))
+    })
+}
+
 /// The `basic_auth` middleware.
 #[derive(Debug)]
 pub(crate) struct BasicAuth {
@@ -30,6 +48,8 @@ pub(crate) struct BasicAuth {
     challenge: HeaderValue,
     remove_header: bool,
     cache: Arc<Cache>,
+    /// The verification slots: the process-wide ones (a test may give its own).
+    slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl BasicAuth {
@@ -55,6 +75,18 @@ impl BasicAuth {
         if users.is_empty() {
             return Err(BuildError::Invalid("basic_auth has no users".to_owned()));
         }
+        let mut names: Vec<&String> = users.keys().collect();
+        names.sort();
+        for user in names {
+            if let Some(problem) = users
+                .get(user)
+                .and_then(|hash| rdock_model::password::cost_problem(hash))
+            {
+                return Err(BuildError::Invalid(format!(
+                    "the password of `{user}`: {problem}"
+                )));
+            }
+        }
         let realm = config.realm.as_deref().unwrap_or("rdock").replace('"', "'");
         let challenge = HeaderValue::from_str(&format!(
             "Basic realm=\"{realm}\", charset=\"UTF-8\""
@@ -65,6 +97,7 @@ impl BasicAuth {
             challenge,
             remove_header: config.remove_header,
             cache: Arc::new(Cache::default()),
+            slots: slots().clone(),
         })
     }
 
@@ -110,21 +143,35 @@ impl Middleware for BasicAuth {
             return self.unauthorized();
         };
         let Some(hash) = self.users.get(&user).cloned() else {
+            cx.auth_failed = true;
             return self.unauthorized();
         };
         let key = self.cache.key(&user, &password, &hash);
         let valid = if self.cache.contains(key, Instant::now()) {
             true
         } else {
-            let checked = tokio::task::spawn_blocking(move || hashes::verify(&password, &hash))
-                .await
-                .unwrap_or(false);
+            let Ok(Ok(slot)) =
+                tokio::time::timeout(VERIFY_WAIT, self.slots.clone().acquire_owned()).await
+            else {
+                tracing::warn!("every password verification slot is busy; answering 503");
+                return Flow::Reply(
+                    Reply::problem(crate::ProblemKind::Overloaded)
+                        .header(http::header::RETRY_AFTER, HeaderValue::from_static("1")),
+                );
+            };
+            let checked = tokio::task::spawn_blocking(move || {
+                let _slot = slot;
+                hashes::verify(&password, &hash)
+            })
+            .await
+            .unwrap_or(false);
             if checked {
                 self.cache.insert(key, Instant::now());
             }
             checked
         };
         if !valid {
+            cx.auth_failed = true;
             return self.unauthorized();
         }
         if self.remove_header {
@@ -242,6 +289,70 @@ mod tests {
         let mut req = request("GET", "/", &[("authorization", &ok)]);
         assert_eq!(block_on(mw.request(&mut req, &mut cx())), Flow::Next);
         assert!(header(&req.headers, "authorization").is_some(), "kept");
+    }
+
+    #[test]
+    fn hashes_above_the_cost_ceilings_are_refused_from_files_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("users");
+        std::fs::write(
+            &file,
+            "ok:{SHA}W6ph5Mm5Pz8GgiULbPgzG37mj9g=\nslow:$2b$20$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ01234\n",
+        )
+        .unwrap();
+        let Err(BuildError::Invalid(message)) = BasicAuth::new(&BasicAuthConfig {
+            users_file: Some(file),
+            ..BasicAuthConfig::default()
+        }) else {
+            panic!("a cost of 20 is refused")
+        };
+        assert!(
+            message.contains("`slow`") && message.contains("limit is 14"),
+            "{message}"
+        );
+        let Err(BuildError::Invalid(message)) = BasicAuth::new(&BasicAuthConfig {
+            users: vec![
+                "mem:$argon2id$v=19$m=4194304,t=1,p=1$c29tZXNhbHQxMjM0NTY3OA$AAAA".to_owned(),
+            ],
+            ..BasicAuthConfig::default()
+        }) else {
+            panic!("4 GiB is refused")
+        };
+        assert!(message.contains("262144"), "{message}");
+    }
+
+    #[test]
+    fn verifications_are_capped_and_the_excess_gets_503() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            assert!((1..=MAX_VERIFYING).contains(&slots().available_permits()));
+            // Two slots of its own, both held, as slow verifications would.
+            let total = 2;
+            let hash = bcrypt::hash("s3cret", 4).unwrap();
+            let mut mw = auth(&[&format!("alice:{hash}")], false);
+            mw.slots = Arc::new(tokio::sync::Semaphore::new(total));
+            let held = mw.slots.clone().acquire_many_owned(2).await.unwrap();
+            let value = basic("alice", "wrong");
+            let mut req = request("GET", "/", &[("authorization", &value)]);
+            let started = Instant::now();
+            let Flow::Reply(reply) = mw.request(&mut req, &mut cx()).await else {
+                panic!("no slot: 503")
+            };
+            assert_eq!(reply.status, 503);
+            assert_eq!(reply_header(&reply, "retry-after"), Some("1"));
+            assert!(started.elapsed() >= VERIFY_WAIT, "it waited briefly first");
+            drop(held);
+            // With a slot free, the same request is checked (and refused: wrong password).
+            let Flow::Reply(reply) = mw.request(&mut req, &mut cx()).await else {
+                panic!("401")
+            };
+            assert_eq!(reply.status, 401);
+            assert_eq!(mw.slots.available_permits(), total, "slots come back");
+        });
     }
 
     #[test]

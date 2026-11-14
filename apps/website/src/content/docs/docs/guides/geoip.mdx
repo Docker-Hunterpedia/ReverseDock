@@ -1,0 +1,103 @@
+---
+title: GeoIP
+description: Route and refuse by client country, continent or autonomous system with ClientCountry, ClientContinent and ClientASN, using a MaxMind DB file you download and keep current.
+sidebar:
+  order: 33
+---
+
+import Status from '../../../../components/Status.astro';
+
+With a GeoIP database <Status planned="v0.9" />, rules can match the client's **country**,
+**continent** or **autonomous system**. ReverseDock reads databases in the MaxMind DB format
+(`.mmdb`); it bundles none and downloads none.
+
+```yaml title="rdock.yaml (excerpt)"
+geoip:
+  database: /var/lib/geoip/country.mmdb        # country and continent
+  asn_database: /var/lib/geoip/asn.mmdb        # autonomous systems (optional)
+  max_age: 30d                                 # the oldest build accepted
+  on_stale: warn                               # or refuse
+  log: { country: false, asn: false }          # opt-in access-log fields
+routes:
+  eu-only:
+    match: "Host(`eu.example.com`) && ClientContinent(`EU`)"
+    service: eu
+  blocked:
+    match: "Host(`example.com`) && ClientCountry(`KP`, `IR`)"
+    service: refuse
+    priority: 100
+```
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `database` | unset | A country database: gives `ClientCountry` and `ClientContinent` (and `ClientASN` for files that carry ASNs, such as IPinfo Lite). |
+| `asn_database` | unset | An ASN database for `ClientASN`. |
+| `max_age` | `30d` | A database built longer ago than this is stale (by `build_epoch` in its metadata). |
+| `on_stale` | `warn` | `warn` logs a warning and keeps using it; `refuse` refuses to load it, so the configuration that needs it is refused (the running one stays). |
+| `log.country`, `log.asn` | `false` | Add `country` and `asn` to the access log. |
+
+A rule with a GeoIP matcher and no database configured is refused by `rdock validate`; a file
+that is missing or not a MaxMind DB refuses the configuration with the reason.
+
+## Matchers
+
+- ``ClientCountry(`DE`, `FR`)``: ISO 3166-1 alpha-2 codes, upper case.
+- ``ClientContinent(`EU`)``: `AF`, `AN`, `AS`, `EU`, `NA`, `OC`, `SA`.
+- ``ClientASN(`64496`)``: autonomous system numbers, digits only.
+
+They work in HTTP, TCP and UDP rules and look up the **resolved client address**: the TCP peer,
+or the address from `X-Forwarded-For` / `CF-Connecting-IP` when the peer is a
+[trusted proxy](/docs/guides/behind-a-proxy/). A wrong `security.trusted_proxies` geolocates
+your proxy instead of the client.
+
+## Unknown addresses
+
+An address that is not in the database, and every address that is not globally routable
+(loopback, private ranges, link-local, CGNAT `100.64.0.0/10`, unique-local IPv6, documentation
+ranges), has no country, continent or ASN: **a GeoIP matcher never matches it**.
+
+Negation is plain logic, so ``!ClientCountry(`RU`)`` **does** match an unknown address. That
+decides how to write a rule:
+
+- An **allow-list** keeps unknown addresses out: ``Host(`eu.example.com`) && ClientContinent(`EU`)``
+  serves only addresses known to be in Europe.
+- A **deny rule written as a negation** lets them in:
+  ``Host(`example.com`) && !ClientCountry(`RU`)`` serves unknown addresses. To refuse
+  countries and keep unknown addresses, route the listed countries to a refusing service with a
+  higher priority (the `blocked` route above) instead.
+
+## Which database
+
+| Database | Licence | Notes |
+|---|---|---|
+| [DB-IP Lite](https://db-ip.com/db/lite.php) | CC BY 4.0, attribution to DB-IP.com | Country and ASN in MMDB, monthly. The least restrictive. |
+| [IPinfo Lite](https://ipinfo.io/developers/ipinfo-lite-database) | CC BY-SA 4.0, attribution | Country, continent and ASN in one MMDB; download needs a token. |
+| [MaxMind GeoLite2](https://www.maxmind.com/en/geolite/eula) | GeoLite EULA (updated 2026-02-12) | Needs an account. The EULA requires you to stop using and delete an old version within **30 days** of a new release, and forbids redistribution; hence the default `max_age: 30d`. |
+| MaxMind GeoIP2 | commercial | Same format. |
+
+(Licences checked 2026-11-13.) Keep the file current with a cron job or `geoipupdate`; write the
+new file next to the old one and rename it over, so rdock never reads half a file. The file is
+read into memory (no `mmap`) and read again when it changes; a file that fails to load keeps
+the previous database.
+
+## Freshness metrics
+
+`rdock_geoip_build_timestamp_seconds{database}` and `rdock_geoip_database_age_seconds{database}`
+(`country`, `asn`) let you alert before `max_age` is reached:
+
+```promql
+rdock_geoip_database_age_seconds > 25 * 86400
+```
+
+## Privacy
+
+A location derived from an IP address is personal data in many jurisdictions (for example under
+the GDPR when it can be tied to a person). The `country` and `asn` access-log fields are off by
+default; turn them on only with a reason and a retention period, and mention them in your
+privacy notice.
+
+## Related
+
+- [Rule grammar](/docs/reference/rules/#geoip-matchers)
+- [Behind another proxy](/docs/guides/behind-a-proxy/)
+- [Abuse protection](/docs/guides/abuse-protection/)

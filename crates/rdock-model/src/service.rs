@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::values::{BackendAddress, Duration};
+use crate::values::{BackendAddress, Duration, Factor};
 
 /// An HTTP service: a pool of backends, a weighted split over other services, or a fixed
 /// answer.
@@ -54,6 +54,68 @@ pub struct Service {
     /// Requests in flight to one backend; a backend at the limit gets no more until one ends.
     #[serde(default)]
     pub max_connections_per_backend: Option<u32>,
+    /// How traffic moves between backend `priority` tiers. `strict` (the default): a tier gets
+    /// traffic only when every tier above it has no available backend. `spill`: a tier keeps
+    /// `healthy share × overprovisioning` of the traffic (at most all of it) and the rest goes
+    /// to the next tier, as Envoy's priority levels do.
+    #[serde(default)]
+    pub failover: Failover,
+    /// With `failover: spill`: how much more than its share each tier can carry. Default 1.4
+    /// (Envoy's `overprovisioning_factor`): a tier keeps all traffic until fewer than about
+    /// 71 % of its backends are available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overprovisioning: Option<Factor>,
+    /// Prefer backends in the proxy's own zone (`locality` at the top level sets the zone).
+    /// Omitted, the top-level `locality.mode` applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locality: Option<ServiceLocality>,
+    /// Hedged requests: a second attempt while the first is still waiting. Planned, not
+    /// supported: Pingora 0.9 cannot race two upstream attempts of one request. Use
+    /// `retries.per_try_timeout` for stalled attempts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hedge: Option<Hedge>,
+}
+
+/// How traffic moves between backend priority tiers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Failover {
+    /// The next tier only when every tier above has no available backend.
+    #[default]
+    Strict,
+    /// Tiers share traffic by their health and the overprovisioning factor.
+    Spill,
+}
+
+/// The locality preference of one service.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ServiceLocality {
+    /// `prefer` or `off`.
+    pub mode: LocalityMode,
+}
+
+/// Whether backends in the proxy's zone are preferred.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalityMode {
+    /// Every available backend, whatever its zone.
+    #[default]
+    Off,
+    /// Only backends in the proxy's zone while at least one of them is available; all
+    /// otherwise (Kubernetes `PreferSameZone`).
+    Prefer,
+}
+
+/// Hedged requests (planned).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Hedge {
+    /// Time without a response after which the hedge would be sent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delay: Option<Duration>,
+    /// Attempts in flight at most, the first included.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_attempts: Option<u32>,
 }
 
 /// A fixed answer of a service (`respond`): the status with ReverseDock's error page.
@@ -71,9 +133,41 @@ pub struct Backend {
     /// Relative share of traffic.
     #[serde(default = "one")]
     pub weight: u32,
-    /// Only used when no primary backend is available.
+    /// Only used when no primary backend is available: the same as `priority: 1`.
     #[serde(default)]
     pub backup: bool,
+    /// Priority tier from 0 (the default, used first) to 7. See the service's `failover`.
+    /// Not together with `backup`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<u8>,
+    /// The zone the backend runs in, e.g. `eu-west-1a`, for `locality: { mode: prefer }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zone: Option<String>,
+    /// Zones whose proxies should use this backend under `locality: { mode: prefer }`, instead
+    /// of its own `zone` (Kubernetes topology hints, `hints.forZones`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub for_zones: Vec<String>,
+}
+
+impl Backend {
+    /// A backend at `address` with weight 1 and no other setting.
+    #[must_use]
+    pub fn new(address: BackendAddress) -> Self {
+        Self {
+            address,
+            weight: 1,
+            backup: false,
+            priority: None,
+            zone: None,
+            for_zones: Vec::new(),
+        }
+    }
+
+    /// The priority tier: `priority`, else 1 for a backup, else 0.
+    #[must_use]
+    pub fn tier(&self) -> u8 {
+        self.priority.unwrap_or(u8::from(self.backup))
+    }
 }
 
 const fn one() -> u32 {
@@ -100,6 +194,9 @@ pub enum Scheme {
     Https,
     /// HTTP/2 in cleartext (gRPC without TLS).
     H2c,
+    /// HTTP/3 over QUIC. Not supported in this version (planned, ADR-0032): Pingora 0.9 has no
+    /// QUIC connector.
+    H3,
 }
 
 /// Backend selection.
@@ -110,6 +207,26 @@ pub struct LoadBalancer {
     pub policy: LbPolicy,
     /// Header or cookie name for `header_hash` and `cookie_hash`.
     pub hash_on: Option<String>,
+    /// `peak_ewma`: time constant of the latency average. Default 10s (Finagle's and
+    /// Linkerd's `decay`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decay: Option<Duration>,
+    /// `peak_ewma`: what a latency sample measures. Default `first_byte`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub measure: Option<LatencyMeasure>,
+}
+
+/// What a `peak_ewma` latency sample measures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LatencyMeasure {
+    /// Time to the response headers (NGINX `least_time header`): a long download or a slow
+    /// client does not make a backend look slow.
+    #[default]
+    FirstByte,
+    /// Time to the end of the response (NGINX `last_byte`). Upgraded connections (WebSocket)
+    /// give no sample.
+    LastByte,
 }
 
 /// Backend selection policies.
@@ -134,6 +251,17 @@ pub enum LbPolicy {
     HeaderHash,
     /// Consistent hash of a cookie (`hash_on`).
     CookieHash,
+    /// Power of two distinct random choices over `latency × (in_flight + 1) / weight`, with a
+    /// latency average that reacts to peaks at once (Finagle's and Linkerd's Peak-EWMA).
+    PeakEwma,
+}
+
+impl LbPolicy {
+    /// Whether the policy hashes a request key (`ip_hash`, `header_hash`, `cookie_hash`).
+    #[must_use]
+    pub fn is_hash(self) -> bool {
+        matches!(self, Self::IpHash | Self::HeaderHash | Self::CookieHash)
+    }
 }
 
 /// Health checks.
@@ -146,8 +274,114 @@ pub struct Health {
     pub passive: Option<PassiveHealth>,
     /// What happens when no backend is healthy.
     pub when_all_down: WhenAllDown,
-    /// A backend that becomes healthy ramps up its weight over this time.
-    pub slow_start: Option<Duration>,
+    /// A backend that becomes healthy again ramps up its weight: a duration such as `30s`, or
+    /// `{ window, aggression, min_weight_percent, on }`. Not with hash policies.
+    pub slow_start: Option<SlowStart>,
+}
+
+/// Slow start: a duration (the long form with its defaults), or the long form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SlowStart {
+    /// Time to full weight; the other settings take their defaults.
+    Window(Duration),
+    /// Every setting.
+    Detailed(SlowStartConfig),
+}
+
+impl SlowStart {
+    /// The long form.
+    #[must_use]
+    pub fn config(&self) -> SlowStartConfig {
+        match self {
+            Self::Window(window) => SlowStartConfig {
+                window: *window,
+                ..SlowStartConfig::default()
+            },
+            Self::Detailed(config) => config.clone(),
+        }
+    }
+}
+
+impl Serialize for SlowStart {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Window(window) => window.serialize(serializer),
+            Self::Detailed(config) => config.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for SlowStart {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Word(String),
+            Other(serde_json::Value),
+        }
+        match Raw::deserialize(deserializer)? {
+            Raw::Word(w) => w
+                .parse::<Duration>()
+                .map(Self::Window)
+                .map_err(serde::de::Error::custom),
+            Raw::Other(v) => serde_json::from_value::<SlowStartConfig>(v)
+                .map(Self::Detailed)
+                .map_err(serde::de::Error::custom),
+        }
+    }
+}
+
+impl JsonSchema for SlowStart {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("SlowStart")
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let duration = generator.subschema_for::<Duration>();
+        let detailed = generator.subschema_for::<SlowStartConfig>();
+        schemars::json_schema!({
+            "description": "Time to full weight, such as `30s`, or every setting.",
+            "anyOf": [ duration, detailed ]
+        })
+    }
+}
+
+/// Slow start, every setting (Envoy's `SlowStartConfig`): the weight is
+/// `weight × max(min_weight_percent / 100, (elapsed / window)^(1 / aggression))`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct SlowStartConfig {
+    /// Time to full weight.
+    pub window: Duration,
+    /// Shape of the ramp: 1.0 (the default) is linear; above 1 ramps faster at first.
+    pub aggression: Factor,
+    /// The weight starts at this share, in percent. Default 10 (Envoy).
+    pub min_weight_percent: u32,
+    /// When a backend ramps: `recovery` (after failed probes or an ejection; the default) and
+    /// `join` (a backend that newly appears in a pool that already had a backend at full
+    /// weight; never at start-up or into an empty pool).
+    pub on: Vec<SlowStartOn>,
+}
+
+impl Default for SlowStartConfig {
+    fn default() -> Self {
+        Self {
+            window: Duration::from_secs(30),
+            aggression: Factor::from_thousandths(1_000),
+            min_weight_percent: 10,
+            on: vec![SlowStartOn::Recovery],
+        }
+    }
+}
+
+/// When a backend's weight ramps up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SlowStartOn {
+    /// After recovering from failed probes or an ejection.
+    Recovery,
+    /// When it newly appears in a pool that already had a backend at full weight.
+    Join,
 }
 
 /// Behaviour when every backend is unhealthy.
@@ -252,6 +486,14 @@ pub struct PassiveHealth {
     pub statuses: Vec<u16>,
     /// Largest share of the pool ejected at once, in percent.
     pub max_ejection_percent: u32,
+    /// Up to this much is added at random to each ejection time, so backends ejected by many
+    /// instances do not all return at once (Envoy's `max_ejection_time_jitter`). Default 0s.
+    pub ejection_jitter: Duration,
+    /// Statistical detectors that compare backends with each other once per interval and eject
+    /// the outliers through the same ejection as `failures` (back-off, `max_ejection_percent`,
+    /// trial request).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outlier: Option<OutlierDetection>,
 }
 
 impl Default for PassiveHealth {
@@ -262,6 +504,85 @@ impl Default for PassiveHealth {
             ejection: Duration::from_secs(30),
             statuses: vec![502, 503, 504],
             max_ejection_percent: 50,
+            ejection_jitter: Duration::from_secs(0),
+            outlier: None,
+        }
+    }
+}
+
+/// Outlier detectors (Envoy's outlier detection). Failures are those of passive health:
+/// connection errors, resets, timeouts and `statuses`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct OutlierDetection {
+    /// How often the detectors look at the counts of the last interval. Default 10s (Envoy).
+    pub interval: Duration,
+    /// Ejects a backend whose success rate is below `mean − stdev_factor × σ` of the others.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub success_rate: Option<SuccessRateDetector>,
+    /// Ejects a backend whose failures reach `threshold` percent of its requests.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_percentage: Option<FailurePercentageDetector>,
+}
+
+impl Default for OutlierDetection {
+    fn default() -> Self {
+        Self {
+            interval: Duration::from_secs(10),
+            success_rate: None,
+            failure_percentage: None,
+        }
+    }
+}
+
+/// The success-rate detector, with Envoy's defaults.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct SuccessRateDetector {
+    /// Turns the detector on. Default `false`.
+    pub enabled: bool,
+    /// Multiplier of the standard deviation. Default 1.9 (Envoy's 1900 / 1000).
+    pub stdev_factor: Factor,
+    /// Backends with enough requests needed before anything is evaluated. Default 5; at
+    /// least 3.
+    pub minimum_hosts: u32,
+    /// Requests in the interval for a backend to count. Default 100.
+    pub request_volume: u32,
+}
+
+impl Default for SuccessRateDetector {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            stdev_factor: Factor::from_thousandths(1_900),
+            minimum_hosts: 5,
+            request_volume: 100,
+        }
+    }
+}
+
+/// The failure-percentage detector, with Envoy's defaults.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct FailurePercentageDetector {
+    /// Turns the detector on. Default `false`.
+    pub enabled: bool,
+    /// Failure share that ejects, in percent. Default 85.
+    pub threshold: u32,
+    /// Backends with enough requests needed before anything is evaluated. Default 5; at
+    /// least 3.
+    pub minimum_hosts: u32,
+    /// Requests in the interval for a backend to count. Default 50.
+    pub request_volume: u32,
+}
+
+impl Default for FailurePercentageDetector {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            threshold: 85,
+            minimum_hosts: 5,
+            request_volume: 50,
         }
     }
 }
@@ -279,6 +600,13 @@ pub struct Retries {
     pub budget_percent: u32,
     /// Also retry non-idempotent methods such as POST. Only safe if backends are idempotent.
     pub retry_non_idempotent: bool,
+    /// Abandons an attempt that has not finished a read for this long and retries it on
+    /// another backend, within the budget and only where a retry is allowed (`on` must list
+    /// `timeout`). It replaces `timeouts.read` for every read of such an attempt, the wait for
+    /// the response headers and each pause of the response body; the last attempt and
+    /// requests that cannot be retried wait `timeouts.read`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub per_try_timeout: Option<Duration>,
 }
 
 impl Default for Retries {
@@ -288,6 +616,7 @@ impl Default for Retries {
             on: vec![RetryOn::Connect],
             budget_percent: 20,
             retry_non_idempotent: false,
+            per_try_timeout: None,
         }
     }
 }

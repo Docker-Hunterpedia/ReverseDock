@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use http::HeaderValue;
 use pingora::http::{RequestHeader, ResponseHeader};
 use rdock_limits::quota::{QuotaCounter, QuotaRegistry, Taken, Window};
+use rdock_limits::shared::{Budget, SharedLimits, Take, WindowKind};
 use rdock_model::gateway::{LimitHeaders, QuotaConfig, QuotaWindow};
 
 use crate::phase::{Capabilities, Phases};
@@ -18,9 +19,13 @@ use crate::{Context, Flow, Middleware, ProblemKind, Reply};
 pub(crate) struct Quota {
     name: String,
     limit: u64,
+    /// `key: group`: count per primary group instead of per consumer.
+    by_group: bool,
     overrides: Vec<(String, u64)>,
     headers: LimitHeaders,
     counter: Arc<QuotaCounter>,
+    /// The cluster-wide budget with `scope: cluster`.
+    cluster: Option<Arc<Budget>>,
     metrics: Option<rdock_observability::Metrics>,
 }
 
@@ -37,6 +42,7 @@ impl Quota {
         config: &QuotaConfig,
         registry: &QuotaRegistry,
         metrics: Option<&rdock_observability::Metrics>,
+        shared: Option<&SharedLimits>,
     ) -> Self {
         let window = match config.window {
             QuotaWindow::Hour => Window::Hour,
@@ -48,6 +54,7 @@ impl Quota {
         Self {
             name: name.to_owned(),
             limit: config.limit,
+            by_group: config.key == rdock_model::values::RateLimitKey::Group,
             overrides: config
                 .overrides
                 .iter()
@@ -55,6 +62,14 @@ impl Quota {
                 .collect(),
             headers: config.headers,
             counter,
+            cluster: shared
+                .filter(|_| config.scope == rdock_model::middleware::LimitScope::Cluster)
+                .map(|s| {
+                    s.budget(
+                        &crate::ratelimit::budget_id("q", name, None),
+                        WindowKind::Calendar(window),
+                    )
+                }),
             metrics: metrics.cloned(),
         }
     }
@@ -65,8 +80,18 @@ impl Quota {
         let Some(consumer) = &cx.consumer else {
             return (anonymous_key(cx.client_ip), self.limit);
         };
+        if self.by_group
+            && let Some(primary) = consumer.primary_group()
+        {
+            let limit = self
+                .overrides
+                .iter()
+                .find(|(group, _)| **group == **primary)
+                .map_or(self.limit, |(_, l)| *l);
+            return (rdock_limits::quota::group_key(primary), limit);
+        }
         let limit = consumer
-            .groups
+            .counted_groups()
             .iter()
             .find_map(|g| {
                 self.overrides
@@ -96,6 +121,13 @@ impl Middleware for Quota {
 
     async fn request(&self, _req: &mut RequestHeader, cx: &mut Context) -> Flow {
         let (key, limit) = self.key_and_limit(cx);
+        if let Some(budget) = self.cluster.as_ref().filter(|b| b.attached()) {
+            let taken = match budget.take(&key, limit) {
+                Take::Allowed { remaining, reset } => Taken::Allowed { remaining, reset },
+                Take::Exceeded { reset } => Taken::Exceeded { reset },
+            };
+            return self.answer(taken, &key, limit, cx);
+        }
         let (taken, overflowed) = self.counter.take_counted(&key, limit);
         if let Some(class) = overflowed {
             tracing::debug!(middleware = %self.name, class = class.label(), "quota keys full; shared counter used");
@@ -105,6 +137,22 @@ impl Middleware for Quota {
                     .inc();
             }
         }
+        self.answer(taken, &key, limit, cx)
+    }
+
+    async fn response(&self, resp: &mut ResponseHeader, cx: &mut Context) {
+        if let Some(r) = cx.take_state::<Remaining>() {
+            for (name, value) in
+                draft_headers(&self.name, r.limit, self.window_seconds(), r.left, r.reset)
+            {
+                let _ = resp.insert_header(name, value);
+            }
+        }
+    }
+}
+
+impl Quota {
+    fn answer(&self, taken: Taken, key: &str, limit: u64, cx: &mut Context) -> Flow {
         match taken {
             Taken::Allowed { remaining, reset } => {
                 if self.headers == LimitHeaders::Draft {
@@ -128,16 +176,6 @@ impl Middleware for Quota {
                     }
                 }
                 Flow::Reply(reply)
-            }
-        }
-    }
-
-    async fn response(&self, resp: &mut ResponseHeader, cx: &mut Context) {
-        if let Some(r) = cx.take_state::<Remaining>() {
-            for (name, value) in
-                draft_headers(&self.name, r.limit, self.window_seconds(), r.left, r.reset)
-            {
-                let _ = resp.insert_header(name, value);
             }
         }
     }
@@ -235,5 +273,40 @@ mod tests {
             assert!(key.bytes().all(|b| b.is_ascii_lowercase()));
             assert!(number.parse::<u64>().is_ok());
         }
+    }
+
+    #[test]
+    fn group_quotas_count_per_primary_group() {
+        use rdock_model::values::RateLimitKey;
+        let mut overrides = std::collections::BTreeMap::new();
+        overrides.insert("gold".to_owned(), 3);
+        let config = QuotaConfig {
+            limit: 2,
+            window: QuotaWindow::Day,
+            key: RateLimitKey::Group,
+            overrides,
+            headers: LimitHeaders::Off,
+            flush_interval: rdock_model::values::Duration::from_secs(10),
+            scope: rdock_model::middleware::LimitScope::Instance,
+        };
+        let registry = QuotaRegistry::default();
+        let quota = Quota::new("q", &config, &registry, None, None);
+        let with = |name: &str, groups: &[&str]| {
+            let mut c = crate::test_support::cx();
+            c.consumer = Some(crate::Consumer::configured(name, groups));
+            quota.key_and_limit(&c)
+        };
+        assert_eq!(with("ann", &["acme", "gold"]), ("group:acme".to_owned(), 2));
+        assert_eq!(with("bob", &["gold"]), ("group:gold".to_owned(), 3));
+        assert_eq!(with("solo", &[]), ("solo".to_owned(), 2));
+        assert_eq!(
+            quota.key_and_limit(&crate::test_support::cx()).0,
+            "ip:192.0.2.10"
+        );
+        assert_eq!(
+            rdock_limits::quota::KeyClass::of("group:acme"),
+            Some(rdock_limits::quota::KeyClass::Group)
+        );
+        assert_eq!(rdock_limits::quota::key_consumer("group:acme"), None);
     }
 }

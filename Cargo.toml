@@ -20,9 +20,13 @@ members = [
   "crates/rdock-admin",
   "crates/rdock-cloudflare",
   "crates/rdock-credentials",
+  "crates/rdock-cluster",
+  "crates/rdock-control",
   "crates/rdock-dns-providers",
   "crates/rdock-migrate",
   "crates/rdock-testkit",
+  # The per-request measurement helper (benchmarks/README.md, "Per-request cost without Docker").
+  "benchmarks/perreq",
   "crates/providers/rdock-provider-file",
   "crates/providers/rdock-provider-docker",
   "crates/providers/rdock-provider-swarm",
@@ -51,6 +55,8 @@ rdock-admin = { path = "crates/rdock-admin" }
 rdock-balancer = { path = "crates/rdock-balancer" }
 rdock-cache = { path = "crates/rdock-cache" }
 rdock-cloudflare = { path = "crates/rdock-cloudflare" }
+rdock-cluster = { path = "crates/rdock-cluster" }
+rdock-control = { path = "crates/rdock-control" }
 rdock-acme = { path = "crates/rdock-acme" }
 rdock-config = { path = "crates/rdock-config" }
 rdock-credentials = { path = "crates/rdock-credentials" }
@@ -103,6 +109,10 @@ pingora = { version = "0.9.1", default-features = false, features = ["proxy", "r
 # tokio 1.54.1 (1.54.0 is yanked) declares rust-version 1.85, within our MSRV.
 tokio = { version = "1.54.1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 arc-swap = "1.9.3"
+# Listener sockets with a backlog and options before `bind` (H-PERF-01, ADR-0031); 0.6.5 is already
+# locked through tokio and hyper-util (checked 2026-11-13). `all` adds the keep-alive interval and
+# count, `SO_REUSEPORT` and `TCP_USER_TIMEOUT` setters.
+socket2 = { version = "0.6.5", features = ["all"] }
 async-trait = "0.1.92"
 bytes = "1.12.1"
 flate2 = { version = "1.1.5", default-features = false, features = ["zlib-ng"] }
@@ -127,6 +137,11 @@ subtle = "2.6.1"
 # types (2.0.5, already built for rust-embed).
 cap-std = "4.0.3"
 http-range-header = "0.4.2"
+# GeoIP (H-SEC-04, ADR-0031): MaxMind DB reader, ISC. 0.32.0 (2026-09-12) rather than 0.33.0
+# (2026-11-12, one day old on 2026-11-13, whose only change is newtype deserialization). Both have
+# the decoding resource limits added in 0.31. No `mmap` (the file is read into memory, no
+# `unsafe` and no truncation hazard while a file is replaced) and no `unsafe-str-decode`.
+maxminddb = { version = "=0.32.0", default-features = false }
 mime_guess = "2.0.5"
 # Tracing (ADR-0022): OTLP over HTTP/protobuf through our own hyper-rustls client; no tonic, no reqwest.
 opentelemetry = { version = "0.33.1", default-features = false, features = ["trace"] }
@@ -144,6 +159,19 @@ ring = "0.17.14"
 uuid = { version = "1.29.0", features = ["v7", "fast-rng"] }
 # PROXY protocol v1/v2 parse and encode (ADR-0026; 0.1.3, MIT, released 2026-09-23). 0.x: pinned exactly.
 proxy-header = { version = "=0.1.3", default-features = false }
+
+# HTTP/3 ingress (experimental, ADR-0032): only behind the `http3` cargo feature of `rdock`,
+# `rdock-proxy` and `rdock-testkit`, off by default and in release builds. quinn 0.11.12
+# (2026-09-14) on rustls 0.23 with ring only, without default features (they would add the
+# `bloom` token log, `log` and the platform verifier, none needed); h3 0.0.8 and h3-quinn 0.0.10
+# (both 2025-05-06), pinned exactly because h3 is pre-1.0 and its feature
+# `i-implement-a-third-party-backend-and-opt-into-breaking-changes` exposes the frame types our
+# own field validation reads (ADR-0032 "As implemented"). Licences: MIT OR Apache-2.0 (quinn),
+# MIT (h3, h3-quinn); checked on crates.io 2026-11-13. h3-quinn is only the testkit client's
+# adapter: rdock-proxy has its own (frame limits, stop signals; ADR-0032 review fixes).
+quinn = { version = "=0.11.12", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+h3 = { version = "=0.0.8", features = ["i-implement-a-third-party-backend-and-opt-into-breaking-changes"] }
+h3-quinn = "=0.0.10"
 
 # Providers (bollard 0.21.1 released 2026-08-16; no TLS features, Docker endpoints are unix sockets or plain tcp://)
 bollard = { version = "0.21.1", default-features = false, features = ["http", "pipe"] }
@@ -170,6 +198,13 @@ prometheus = { version = "0.14.0", default-features = false }
 sd-notify = "0.5.0"
 # Global allocator (0.1.52 released 2026-05-22): musl's malloc mapped and unmapped memory on the request path (#93).
 mimalloc = "0.1.52"
+# Optional comparison allocator behind the `jemalloc` feature of `rdock` (H-PERF-06, ADR-0031): off by
+# default and in release builds, so mimalloc stays the allocator we ship. 0.7.0 on crates.io, MIT OR
+# Apache-2.0, checked 2026-11-13.
+tikv-jemallocator = { version = "0.7.0", default-features = false }
+# Counting allocator for the per-request measurement helper (benchmarks/perreq); only behind the
+# bench-only `alloc-count` feature of `rdock`, never in a release build (0.1.10, MIT, checked 2026-11-13).
+stats_alloc = "0.1.10"
 # Raises the open-file limit at start (nix 0.31.3 released 2026-05-11; pingora-core builds it already).
 nix = { version = "0.31.3", default-features = false, features = ["resource"] }
 tracing = "0.1.44"

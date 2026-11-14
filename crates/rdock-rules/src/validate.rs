@@ -56,13 +56,13 @@ fn check(matcher: &Matcher, context: Context) -> Result<(), String> {
         }
         Context::Tcp if !matcher.is_tcp() => {
             return Err(format!(
-                "`{}` is an HTTP matcher; TCP routes accept HostSNI, HostSNIRegexp, ClientIP and ALPN",
+                "`{}` is an HTTP matcher; TCP routes accept HostSNI, HostSNIRegexp, ClientIP, ALPN, ClientFingerprint, ClientCountry, ClientContinent and ClientASN",
                 matcher.name()
             ));
         }
-        Context::Udp if !matches!(matcher, Matcher::ClientIp(_)) => {
+        Context::Udp if !matches!(matcher, Matcher::ClientIp(_)) && !matcher.needs_geoip() => {
             return Err(format!(
-                "`{}` cannot match a datagram; UDP routes accept ClientIP only",
+                "`{}` cannot match a datagram; UDP routes accept ClientIP, ClientCountry, ClientContinent and ClientASN only",
                 matcher.name()
             ));
         }
@@ -87,6 +87,75 @@ fn check(matcher: &Matcher, context: Context) -> Result<(), String> {
         }
         Matcher::ClientIp(ip) => check_ip(ip),
         Matcher::Alpn(protocol) => check_alpn(protocol),
+        Matcher::ClientFingerprint(values) => values.iter().try_for_each(|v| check_fingerprint(v)),
+        Matcher::ClientCountry(codes) => codes.iter().try_for_each(|c| check_country(c)),
+        Matcher::ClientContinent(codes) => codes.iter().try_for_each(|c| check_continent(c)),
+        Matcher::ClientAsn(numbers) => numbers.iter().try_for_each(|n| check_asn(n)),
+    }
+}
+
+/// A JA4 (`t13d1516h2_8daaf6152771_e5627efa2ab1`) or a JA3 (32 hex digits) value.
+fn check_fingerprint(value: &str) -> Result<(), String> {
+    if is_ja4(value) || (value.len() == 32 && value.bytes().all(|b| b.is_ascii_hexdigit())) {
+        Ok(())
+    } else {
+        Err(format!(
+            "`{value}` is not a JA4 fingerprint (like `t13d1516h2_8daaf6152771_e5627efa2ab1`) or a JA3 hash (32 hex digits)"
+        ))
+    }
+}
+
+fn is_ja4(value: &str) -> bool {
+    let mut parts = value.split('_');
+    let (Some(a), Some(b), Some(c), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return false;
+    };
+    let hex12 =
+        |s: &str| s.len() == 12 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    a.len() == 10
+        && a.is_ascii()
+        && matches!(a.as_bytes().first(), Some(b't' | b'q' | b'd'))
+        && matches!(a.as_bytes().get(3), Some(b'd' | b'i'))
+        && a.get(4..8)
+            .is_some_and(|n| n.bytes().all(|b| b.is_ascii_digit()))
+        && a.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        && hex12(b)
+        && hex12(c)
+}
+
+fn check_country(code: &str) -> Result<(), String> {
+    if code.len() == 2 && code.bytes().all(|b| b.is_ascii_uppercase()) {
+        Ok(())
+    } else {
+        Err(format!(
+            "`{code}` is not an ISO 3166-1 alpha-2 country code in upper case (like `DE`)"
+        ))
+    }
+}
+
+/// The continent codes of GeoIP2 databases.
+pub const CONTINENTS: [&str; 7] = ["AF", "AN", "AS", "EU", "NA", "OC", "SA"];
+
+fn check_continent(code: &str) -> Result<(), String> {
+    if CONTINENTS.contains(&code) {
+        Ok(())
+    } else {
+        Err(format!(
+            "`{code}` is not a continent code; use one of {}",
+            CONTINENTS.join(", ")
+        ))
+    }
+}
+
+fn check_asn(number: &str) -> Result<(), String> {
+    match number.parse::<u32>() {
+        Ok(_) if !number.starts_with('+') => Ok(()),
+        _ => Err(format!(
+            "`{number}` is not an autonomous system number (digits only, like `64496`)"
+        )),
     }
 }
 
@@ -253,8 +322,8 @@ mod tests {
             messages("ClientIP(`10.0.0.0/8`) && !ClientIP(`10.1.0.0/16`)", Udp),
             Vec::<String>::new()
         );
-        assert!(messages("HostSNI(`*`)", Udp)[0].contains("ClientIP only"));
-        assert!(messages("Host(`a.com`)", Udp)[0].contains("ClientIP only"));
+        assert!(messages("HostSNI(`*`)", Udp)[0].contains("UDP routes accept ClientIP"));
+        assert!(messages("Host(`a.com`)", Udp)[0].contains("UDP routes accept ClientIP"));
         assert!(messages("ClientIP(`10.0.0.0/33`)", Udp)[0].contains("CIDR"));
     }
 
@@ -271,6 +340,25 @@ mod tests {
         );
         assert!(messages("HeaderRegexp(`bad header`, `x`)", Http)[0].contains("header name"));
         assert!(messages("ALPN(`acme-tls/1`)", Tcp)[0].contains("reserved"));
+    }
+
+    #[test]
+    fn checks_fingerprint_and_geo_values() {
+        for rule in [
+            "ClientFingerprint(`t13d1516h2_8daaf6152771_e5627efa2ab1`, `ada70206e40642a3e4461f35503241d5`)",
+            "ClientCountry(`DE`, `FR`) && ClientContinent(`EU`) || ClientASN(`64496`, `65551`)",
+        ] {
+            assert_eq!(messages(rule, Http), Vec::<String>::new(), "{rule}");
+            assert_eq!(messages(rule, Tcp), Vec::<String>::new(), "{rule}");
+        }
+        assert_eq!(messages("ClientCountry(`DE`)", Udp), Vec::<String>::new());
+        assert!(messages("ClientFingerprint(`x`)", Udp)[0].contains("datagram"));
+        assert!(messages("ClientFingerprint(`t13d`)", Http)[0].contains("JA4"));
+        assert!(messages("ClientCountry(`de`)", Http)[0].contains("upper case"));
+        assert!(messages("ClientCountry(`DEU`)", Http)[0].contains("alpha-2"));
+        assert!(messages("ClientContinent(`XX`)", Http)[0].contains("continent"));
+        assert!(messages("ClientASN(`AS64496`)", Http)[0].contains("autonomous"));
+        assert!(messages("ClientASN(`4294967296`)", Http)[0].contains("autonomous"));
     }
 
     #[test]

@@ -2,15 +2,23 @@
 
 use std::sync::Mutex;
 
+mod ewma;
 mod hashring;
 mod health;
+mod outlier;
 mod state;
 mod sticky;
+mod tiers;
 
+pub use ewma::{FAILURE_PENALTY, Latency, PeakEwma, SEED_FALLBACK, SEED_FLOOR};
 pub use hashring::HashRing;
-pub use health::{Availability, BreakerState, EjectPolicy, MAX_EJECTION, ProbePolicy};
+pub use health::{
+    Availability, BreakerState, EjectPolicy, MAX_EJECTION, ProbePolicy, SlowStart, WEIGHT_SCALE,
+};
+pub use outlier::{Detector, FailurePercentage, Outlier, SuccessRate, outliers};
 pub use state::{BackendState, Ejection, InFlight, MIN_RETRIES, Pool, Registry, RetryPermit};
 pub use sticky::{Match as StickyMatch, StickyKeys};
+pub use tiers::{DEFAULT_OVERPROVISIONING, tier_loads};
 
 /// One backend the balancer may pick.
 #[derive(Debug, Clone, Copy)]
@@ -21,6 +29,8 @@ pub struct Choice<'a> {
     pub weight: u32,
     /// Requests currently sent to this backend.
     pub in_flight: u32,
+    /// Latency estimate, for [`Balancer::PeakEwma`]; `None` counts as never measured.
+    pub latency: Option<&'a Latency>,
 }
 
 /// How a backend is picked among weighted candidates.
@@ -38,6 +48,8 @@ pub enum Balancer {
     P2c,
     /// Consistent hashing of a request key; requests without a key use round-robin.
     Hash(Box<HashRing>),
+    /// Two distinct random picks; the lower `latency × (in_flight + 1) / weight` wins.
+    PeakEwma(PeakEwma),
 }
 
 impl Balancer {
@@ -49,6 +61,7 @@ impl Balancer {
             Self::Random => pick_random(choices, fastrand::u64(..)),
             Self::LeastRequests => least_requests(choices, fastrand::usize(..=choices.len())),
             Self::P2c => p2c(choices, fastrand::u64(..), fastrand::u64(..)),
+            Self::PeakEwma(ewma) => ewma.pick(choices, fastrand::u64(..), fastrand::u64(..)),
             Self::Hash(ring) => match key {
                 Some(key) => ring.pick(choices, key),
                 None => ring.fallback.pick(choices),
@@ -153,6 +166,7 @@ mod tests {
                 id: IDS[i],
                 weight: *w,
                 in_flight: 0,
+                latency: None,
             })
             .collect()
     }
@@ -181,6 +195,7 @@ mod tests {
             Balancer::LeastRequests,
             Balancer::P2c,
             Balancer::Hash(Box::default()),
+            Balancer::PeakEwma(PeakEwma::default()),
         ] {
             assert_eq!(balancer.pick(&[], None), None);
             assert_eq!(balancer.pick(&choices(&[0, 0]), Some(b"k")), None);

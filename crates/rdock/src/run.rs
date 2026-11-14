@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context;
 use rdock_observability::{LogFormat, Metrics, init_logging};
@@ -10,6 +11,7 @@ use rdock_proxy::{DataPlane, Runtime};
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tokio::sync::{mpsc, watch};
 
+use crate::datadir::DataDirLock;
 use crate::engine::Engine;
 use crate::watch::FileWatcher;
 use crate::zero_config::Source;
@@ -28,12 +30,81 @@ pub(crate) fn run(
         LogFormatArg::Text => LogFormat::Text,
     };
     init_logging(format, &args.log).map_err(anyhow::Error::msg)?;
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_name("rdock")
-        .build()
-        .context("starting the async runtime")?;
-    runtime.block_on(serve(args, plugins))
+    let threads = Threads::from_config(args);
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    builder.enable_all().thread_name("rdock");
+    if let Some(workers) = threads.settings.worker_threads {
+        builder.worker_threads(usize::from(workers));
+    }
+    if let Some(blocking) = threads.settings.max_blocking_threads {
+        builder.max_blocking_threads(usize::from(blocking));
+    }
+    let runtime = builder.build().context("starting the async runtime")?;
+    runtime.block_on(serve(args, plugins, threads))
+}
+
+/// The proxy runtime's threads: the `runtime` section as read before the runtime starts, and
+/// the values in effect.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Threads {
+    /// As configured.
+    pub(crate) settings: rdock_model::settings::RuntimeSettings,
+    /// Worker threads in effect.
+    pub(crate) workers: usize,
+    /// Most blocking threads in effect.
+    pub(crate) max_blocking: usize,
+}
+
+impl Threads {
+    /// tokio's default for `max_blocking_threads` (tokio 1.54.1 `Builder` documentation).
+    const TOKIO_MAX_BLOCKING: usize = 512;
+
+    /// Reads `runtime` from the configuration file: the runtime is built before the
+    /// configuration is applied, so this is the one setting read ahead, and a change needs a
+    /// restart. A file that cannot be loaded or has errors leaves the defaults; the start
+    /// reports its problems as usual.
+    fn from_config(args: &RunArgs) -> Self {
+        let source = Source::choose(args.config.as_deref(), Path::new(crate::DEFAULT_CONFIG));
+        let settings = match source {
+            Source::File(path) => rdock_config::load_file(&path)
+                .ok()
+                .filter(|loaded| !loaded.has_errors())
+                .and_then(|loaded| loaded.config.runtime)
+                .unwrap_or_default(),
+            Source::ZeroConfig => rdock_model::settings::RuntimeSettings::default(),
+        };
+        Self::of(settings)
+    }
+
+    /// Shows the values in effect as `rdock_runtime_threads`.
+    pub(crate) fn record(&self, metrics: &Metrics) {
+        for (kind, value) in [
+            ("worker", self.workers),
+            ("max_blocking", self.max_blocking),
+        ] {
+            metrics
+                .runtime_threads
+                .with_label_values(&[kind])
+                .set(i64::try_from(value).unwrap_or(i64::MAX));
+        }
+    }
+
+    fn of(settings: rdock_model::settings::RuntimeSettings) -> Self {
+        // tokio's default: `TOKIO_WORKER_THREADS`, else the CPUs the process may use.
+        let default_workers = std::env::var("TOKIO_WORKER_THREADS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&n| n > 0)
+            .or_else(|| std::thread::available_parallelism().ok().map(usize::from))
+            .unwrap_or(1);
+        Self {
+            settings,
+            workers: settings.worker_threads.map_or(default_workers, usize::from),
+            max_blocking: settings
+                .max_blocking_threads
+                .map_or(Self::TOKIO_MAX_BLOCKING, usize::from),
+        }
+    }
 }
 
 /// Raises the soft open-file limit to the hard one, as Go programs do at start (Go 1.19
@@ -92,6 +163,60 @@ fn sticky_key(data_dir: &Path) -> anyhow::Result<Vec<u8>> {
     }
 }
 
+/// The keys of HTTP/3 stateless resets and Retry tokens (ADR-0032): `$RDOCK_DATA_DIR/quic.key`
+/// (hex, created atomically on first start with mode 0600), so the next process (a restart or a
+/// binary upgrade) answers the previous one's QUIC connections with a stateless reset and
+/// accepts its Retry tokens. Whoever reads the file can forge Retry tokens (skipping address
+/// validation) and stateless resets: an existing file must belong to rdock's user and be
+/// readable by it alone.
+#[cfg(feature = "http3")]
+fn quic_keys(data_dir: &Path) -> anyhow::Result<rdock_proxy::http3::endpoint::QuicKeys> {
+    use rdock_proxy::http3::endpoint::QuicKeys;
+    let path = data_dir.join("quic.key");
+    match read_private(&path) {
+        Ok(Some(text)) => QuicKeys::from_text(&text)
+            .map_err(|e| anyhow::anyhow!("the QUIC key file {}: {e}", path.display())),
+        Ok(None) => {
+            let keys = QuicKeys::random();
+            rdock_config::state::write_atomic(&path, keys.to_text().as_bytes())
+                .with_context(|| format!("writing the QUIC key file {}", path.display()))?;
+            Ok(keys)
+        }
+        Err(err) => Err(err).with_context(|| format!("the QUIC key file {}", path.display())),
+    }
+}
+
+/// Reads a key file that must be private: owned by the user rdock runs as, with no permission
+/// for its group or others. `None` when it does not exist.
+#[cfg_attr(not(feature = "http3"), allow(dead_code))]
+fn read_private(path: &Path) -> anyhow::Result<Option<String>> {
+    use std::io::Read as _;
+    use std::os::unix::fs::MetadataExt;
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err).context("cannot open it"),
+    };
+    let meta = file.metadata().context("cannot read its metadata")?;
+    let mode = meta.mode() & 0o777;
+    if mode & 0o077 != 0 {
+        anyhow::bail!(
+            "it is readable or writable by its group or others (mode {mode:o}); run `chmod 600` on it"
+        );
+    }
+    let uid = rustix::process::geteuid().as_raw();
+    if meta.uid() != uid {
+        anyhow::bail!(
+            "it is owned by uid {}, not by the user rdock runs as (uid {uid})",
+            meta.uid()
+        );
+    }
+    let mut text = String::new();
+    file.read_to_string(&mut text)
+        .context("cannot read it as text")?;
+    Ok(Some(text))
+}
+
 /// The CLI's Unix socket when `admin.socket` is not set.
 pub(crate) fn socket_path(data_dir: &Path) -> PathBuf {
     data_dir.join("admin.sock")
@@ -103,6 +228,8 @@ struct Signals {
     terminate: Signal,
     interrupt: Signal,
     quit: Signal,
+    /// SIGUSR2: an in-place binary upgrade (the NGINX convention; SIGQUIT keeps meaning stop).
+    upgrade: Signal,
 }
 
 impl Signals {
@@ -113,12 +240,13 @@ impl Signals {
             terminate: install(SignalKind::terminate())?,
             interrupt: install(SignalKind::interrupt())?,
             quit: install(SignalKind::quit())?,
+            upgrade: install(SignalKind::user_defined2())?,
         })
     }
 }
 
-/// The data plane with its persistent sticky-cookie key and the spool for held request bodies
-/// (emptied here of whatever an earlier run left).
+/// The data plane with its persistent sticky-cookie key and this process's spool for held
+/// request bodies (`spool/<pid>`).
 fn data_plane(
     data_dir: &Path,
     metrics: Metrics,
@@ -127,29 +255,161 @@ fn data_plane(
     let plane = DataPlane::new(metrics, Runtime::empty())
         .with_sticky_key(sticky_key(data_dir)?)
         .with_plugins(plugins.clone());
-    let spool = data_dir.join("spool");
+    #[cfg(feature = "http3")]
+    let plane = plane.with_quic_keys(quic_keys(data_dir)?);
+    let spool = crate::datadir::spool_dir(data_dir);
     // Disk cache stores without a `path` live under `<data dir>/cache/<name>` (F-WEB-03).
     plane.set_cache_dir(data_dir.join("cache"));
     plane.set_quota_dir(data_dir.join("quota"));
+    plane.set_abuse_dir(data_dir.join("abuse"));
     plane
         .open_spool(&spool)
         .with_context(|| format!("opening the spool directory {}", spool.display()))?;
     Ok(Arc::new(plane))
 }
 
+/// The tasks that write state other processes could share: the providers (the Kubernetes
+/// lease, Secret files), the bind retry, the Vault refresh, and through the engine ACME, the
+/// local CA, the Cloudflare range sync and alerts; and the quota counters' files. Stopped while
+/// a binary upgrade hands over, so there is always one writer.
+pub(crate) struct Writers {
+    engine: Arc<Engine>,
+    plane: Arc<DataPlane>,
+    data_dir: PathBuf,
+    on_snapshot: mpsc::Sender<()>,
+    stop: Option<watch::Sender<bool>>,
+    tasks: Vec<tokio::task::JoinHandle<()>>,
+}
+
+impl Writers {
+    fn new(
+        engine: &Arc<Engine>,
+        plane: &Arc<DataPlane>,
+        data_dir: &Path,
+        on_snapshot: mpsc::Sender<()>,
+    ) -> Self {
+        Self {
+            engine: engine.clone(),
+            plane: plane.clone(),
+            data_dir: data_dir.to_owned(),
+            on_snapshot,
+            stop: None,
+            tasks: Vec::new(),
+        }
+    }
+
+    /// Starts them with the applied configuration.
+    pub(crate) async fn start(&mut self) {
+        if self.stop.is_some() {
+            return;
+        }
+        let config = self.engine.config().await.unwrap_or_default();
+        let (stop, stop_rx) = watch::channel(false);
+        self.tasks = crate::providers::start(
+            &self.engine,
+            &config,
+            &self.data_dir,
+            &stop_rx,
+            &self.on_snapshot,
+        );
+        // Provider listeners left out because their address was in use are retried until they bind.
+        self.tasks.push(tokio::spawn(
+            self.engine.clone().retry_unbound(stop_rx.clone()),
+        ));
+        // `${vault:…}` references are read again every `secrets.vault.refresh`.
+        self.tasks
+            .push(tokio::spawn(self.engine.clone().refresh_vault(stop_rx)));
+        self.stop = Some(stop);
+        self.plane.pause_quota_writes(false);
+        self.engine.resume_background();
+    }
+
+    /// Stops them and waits until they have (the Kubernetes provider releases its lease);
+    /// writes the quota counters a last time.
+    pub(crate) async fn stop(&mut self) {
+        self.engine.pause_background();
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(true);
+        }
+        for task in std::mem::take(&mut self.tasks) {
+            let _ = task.await;
+        }
+        let quotas = self.plane.quotas().clone();
+        let _ = tokio::task::spawn_blocking(move || quotas.flush_all()).await;
+        let abuse = self.plane.abuse().clone();
+        let _ = tokio::task::spawn_blocking(move || abuse.flush_all()).await;
+        self.plane.pause_quota_writes(true);
+    }
+}
+
+/// How the process came to run: started on its own, or handed over by a running one.
+enum Start {
+    Fresh,
+    Inherited(Box<crate::upgrade::inherit::Inherited>),
+}
+
+#[allow(clippy::too_many_lines)] // the process's life from start to exit, in order
 async fn serve(
     args: &RunArgs,
     plugins: &Arc<rdock_plugin_api::Registry>,
+    threads: Threads,
 ) -> anyhow::Result<ExitCode> {
     // Before anything else: the default action of SIGHUP would end the process.
     let mut signals = Signals::install()?;
     raise_open_file_limit();
+    let start = if args.inherit {
+        match crate::upgrade::inherit::receive() {
+            Ok(inherited) => Start::Inherited(Box::new(inherited)),
+            Err(reason) => {
+                eprintln!("error: {reason}");
+                return Ok(ExitCode::from(1));
+            }
+        }
+    } else {
+        Start::Fresh
+    };
     std::fs::create_dir_all(&args.data_dir).with_context(|| {
         format!(
             "creating the data directory {} (set --data-dir or RDOCK_DATA_DIR)",
             args.data_dir.display()
         )
     })?;
+    // One process per data directory, before anything writes to it (ADR-0031).
+    let (lock, mut start) = match start {
+        Start::Fresh => match DataDirLock::acquire(&args.data_dir) {
+            Ok(lock) => {
+                // No live predecessor: what earlier runs left in the spool is nobody's.
+                crate::datadir::clean_spool(&args.data_dir);
+                (lock, Start::Fresh)
+            }
+            Err(err) => {
+                eprintln!("error: {err}");
+                return Ok(ExitCode::from(1));
+            }
+        },
+        Start::Inherited(mut inherited) => {
+            let Some(file) = inherited.lock.take() else {
+                eprintln!("error: the handover has no data-directory lock");
+                return Ok(ExitCode::from(1));
+            };
+            (
+                DataDirLock::adopt(file, &args.data_dir),
+                Start::Inherited(inherited),
+            )
+        }
+    };
+    if let Err(reason) = crate::datadir::check_format(&args.data_dir) {
+        if let Start::Inherited(inherited) = &start {
+            let _ = inherited.channel.send(
+                &crate::upgrade::wire::Message::Failed {
+                    reason: reason.clone(),
+                },
+                &[],
+            );
+        }
+        eprintln!("error: {reason}");
+        return Ok(ExitCode::from(1));
+    }
     let source = Source::choose(args.config.as_deref(), Path::new(crate::DEFAULT_CONFIG));
     if source == Source::ZeroConfig && !Path::new(DOCKER_SOCKET).exists() {
         eprintln!(
@@ -162,27 +422,119 @@ async fn serve(
     }
     let metrics = Metrics::new(VERSION, COMMIT).context("registering metrics")?;
     let plane = data_plane(&args.data_dir, metrics, plugins)?;
-    let engine = Arc::new(Engine::new(source.clone(), &args.data_dir, plane.clone()));
+    let cluster = match &source {
+        Source::File(path) => match crate::cluster::read(Some(path)) {
+            Some(settings) => {
+                match crate::cluster::context(settings, &args.data_dir, plane.metrics()).await {
+                    Ok(context) => {
+                        crate::cluster::prime(&context, &plane.challenges()).await;
+                        Some(context)
+                    }
+                    Err(err) => {
+                        eprintln!("error: {err:#}");
+                        return Ok(ExitCode::from(1));
+                    }
+                }
+            }
+            None => None,
+        },
+        Source::ZeroConfig => None,
+    };
+    let engine = Arc::new(Engine::new(
+        source.clone(),
+        &args.data_dir,
+        plane.clone(),
+        cluster.as_ref(),
+    ));
+    engine.set_threads(threads);
+    let (upgrade_tx, mut upgrades) = mpsc::channel::<crate::upgrade::Trigger>(1);
+    engine.set_upgrades(upgrade_tx.clone());
     tokio::spawn(engine.clone().watch_thresholds());
+    if let Start::Inherited(inherited) = &mut start {
+        // Built without accepting and without writers until the old process says `go`.
+        plane.set_accepting(false);
+        engine.pause_background();
+        plane.pause_quota_writes(true);
+        engine
+            .upgrade_generation
+            .store(inherited.generation, std::sync::atomic::Ordering::SeqCst);
+        plane
+            .metrics()
+            .upgrade_generation
+            .set(i64::try_from(inherited.generation).unwrap_or(i64::MAX));
+        if let Err(reason) = inherited.hand_to(&plane) {
+            let _ = inherited.channel.send(
+                &crate::upgrade::wire::Message::Failed {
+                    reason: reason.clone(),
+                },
+                &[],
+            );
+            eprintln!("error: {reason}");
+            return Ok(ExitCode::from(1));
+        }
+    }
 
     log_start(&source, plugins);
+    // The control plane's agent runs beside the engine from the start: a member that has no
+    // stored bundle yet boots from the first one it delivers (ADR-0031).
+    let (_agent_stop, agent_stop_rx) = watch::channel(false);
+    if let Some(context) = &cluster {
+        crate::cluster::start_agent(context, &engine, plane.metrics(), agent_stop_rx.clone());
+        if let Err(err) = crate::cluster::start_limits(
+            context,
+            plane.shared_limits(),
+            plane.metrics(),
+            agent_stop_rx,
+        ) {
+            eprintln!("error: {err:#}");
+            return Ok(ExitCode::from(1));
+        }
+    }
     engine.restore_snapshots();
     let report = match engine.boot().await {
         Ok(report) => report,
         Err(report) => {
-            eprintln!(
-                "error: {} cannot be used: {}",
+            let reason = format!(
+                "{} cannot be used: {}",
                 source.describe(),
                 report.error.as_deref().unwrap_or("unknown error")
             );
+            if let Start::Inherited(inherited) = &start {
+                let _ = inherited.channel.send(
+                    &crate::upgrade::wire::Message::Failed {
+                        reason: reason.clone(),
+                    },
+                    &[],
+                );
+            }
+            eprintln!("error: {reason}");
             for line in crate::validate::render_diagnostics(&report.diagnostics) {
                 eprintln!("{line}");
             }
             return Ok(ExitCode::from(1));
         }
     };
+    let unclaimed = plane.drop_unclaimed();
+    if unclaimed > 0 {
+        tracing::info!(
+            unclaimed,
+            "closed handed-over sockets the configuration no longer uses"
+        );
+    }
     let (stop, stop_rx) = watch::channel(false);
-    let admin = start_admin(args, &engine, stop_rx.clone()).await?;
+    let (admin_gate, admin_gate_rx) = watch::channel(!matches!(start, Start::Inherited(_)));
+    let admin_sockets = match &mut start {
+        Start::Inherited(inherited) => rdock_admin::Sockets {
+            tcp: inherited.admin_tcp.take(),
+            unix: inherited.admin_unix.take(),
+            accepting: Some(admin_gate_rx),
+        },
+        Start::Fresh => rdock_admin::Sockets {
+            accepting: Some(admin_gate_rx),
+            ..rdock_admin::Sockets::default()
+        },
+    };
+    let admin = start_admin(args, &engine, stop_rx.clone(), admin_sockets).await?;
     let dns = {
         let plane = plane.clone();
         tokio::spawn(async move { plane.refresh_dns(stop_rx).await })
@@ -190,17 +542,61 @@ async fn serve(
     let (on_change, mut changes) = mpsc::channel(1);
     let (on_snapshot, mut snapshots) = mpsc::channel(1);
     let boot_config = engine.config().await.unwrap_or_default();
-    let provider_tasks = crate::providers::start(
-        &engine,
-        &boot_config,
-        &args.data_dir,
-        &stop.subscribe(),
-        &on_snapshot,
-    );
-    // Provider listeners left out because their address was in use are retried until they bind.
-    tokio::spawn(engine.clone().retry_unbound(stop.subscribe()));
-    // `${vault:…}` references are read again every `secrets.vault.refresh`.
-    tokio::spawn(engine.clone().refresh_vault(stop.subscribe()));
+    let mut writers = Writers::new(&engine, &plane, &args.data_dir, on_snapshot);
+    match start {
+        Start::Fresh => writers.start().await,
+        Start::Inherited(inherited) => {
+            if let Err(reason) = inherited.ready_and_wait().await {
+                eprintln!("error: {reason}");
+                return Ok(ExitCode::from(1));
+            }
+            // The old process stopped accepting and its writers: this one takes over.
+            for (_, counter) in plane.quotas().counters() {
+                counter.reread();
+            }
+            // Bans the old process wrote up to `go` (it stopped writing then).
+            plane.abuse().reread();
+            writers.start().await;
+            engine.certificates_loaded(Duration::from_secs(5)).await;
+            plane.set_accepting(true);
+            admin_gate.send_replace(true);
+            if let Err(err) = lock.write_pid() {
+                tracing::warn!(file = %lock.path().display(), error = %err, "cannot write the pid into the lock file");
+            }
+            if let Some(admin) = &admin {
+                // The old process wrote the audit log until `go`; continue its chain.
+                admin.resync_audit();
+                admin.audit(rdock_admin::audit::Event {
+                    resource: Some(format!(
+                        "sha256:{} {}",
+                        inherited.binary_sha256,
+                        inherited.binary.display()
+                    )),
+                    reason: Some(format!(
+                        "took over from pid {} (generation {})",
+                        inherited.previous_pid, inherited.generation
+                    )),
+                    ..rdock_admin::audit::Event::new(
+                        inherited.triggered_by.clone(),
+                        if inherited.method == "signal" {
+                            "signal"
+                        } else {
+                            "socket"
+                        },
+                        "upgrade",
+                    )
+                });
+            }
+            let previous = inherited.previous_pid;
+            if let Err(reason) = inherited.serving(plane.clone()) {
+                tracing::warn!(error = %reason, "cannot follow the old process's drain");
+            }
+            tracing::info!(
+                previous_pid = previous,
+                "took over from the previous process"
+            );
+        }
+    }
     let mut watcher = (!args.no_watch)
         .then(|| start_watcher(&engine, on_change))
         .flatten();
@@ -212,6 +608,7 @@ async fn serve(
         origin = report.origin.as_str(),
         "rdock is ready"
     );
+    let mut draining = None;
     loop {
         tokio::select! {
             _ = signals.hangup.recv() => {
@@ -224,6 +621,46 @@ async fn serve(
             Some(()) = snapshots.recv() => {
                 engine.reload("provider").await;
             }
+            _ = signals.upgrade.recv() => {
+                let trigger = crate::upgrade::Trigger { binary: None, allow_downgrade: false, actor: "signal".into(), reply: None };
+                let _ = upgrade_tx.try_send(trigger);
+            }
+            Some(mut trigger) = upgrades.recv() => {
+                let outcome = crate::upgrade::perform(
+                    crate::upgrade::Context {
+                        args,
+                        source: &source,
+                        engine: &engine,
+                        plane: &plane,
+                        admin: admin.as_ref(),
+                        admin_gate: &admin_gate,
+                        lock: &lock,
+                        writers: &mut writers,
+                    },
+                    &trigger,
+                )
+                .await;
+                match trigger.reply.take() {
+                    Some(reply) => {
+                        let _ = reply.send(outcome.to_admin());
+                    }
+                    // A signal has no request to record it; this process is still the audit
+                    // log's writer when the upgrade did not happen.
+                    None => audit_signal_failure(admin.as_ref(), &outcome),
+                }
+                if let crate::upgrade::Outcome::Serving(handover, _) = outcome {
+                    draining = Some(handover);
+                    break;
+                }
+                // Refused requests that queued meanwhile are answered as refused.
+                while let Ok(mut queued) = upgrades.try_recv() {
+                    if let Some(reply) = queued.reply.take() {
+                        let _ = reply.send(rdock_admin::UpgradeOutcome::Refused(
+                            serde_json::json!({ "error": "another upgrade was in progress" }),
+                        ));
+                    }
+                }
+            }
             _ = signals.terminate.recv() => break,
             _ = signals.quit.recv() => break,
             _ = signals.interrupt.recv() => break,
@@ -232,17 +669,45 @@ async fn serve(
             w.set_files(&engine.watched_files());
         }
     }
-    shut_down(&engine, &plane, &mut signals).await;
+    drop(watcher);
+    if let Some(handover) = draining {
+        // Another process serves now: drain this one's connections and exit. Its writers are
+        // stopped; the quota counts it takes while draining go to the new process.
+        engine.set_ready(false);
+        tokio::select! {
+            () = crate::upgrade::drain(&plane, handover) => {}
+            _ = signals.terminate.recv() => tracing::warn!("signal while draining; stopping now"),
+            _ = signals.interrupt.recv() => tracing::warn!("signal while draining; stopping now"),
+        }
+    } else {
+        shut_down(&engine, &plane, &mut signals).await;
+        writers.stop().await;
+    }
     let _ = stop.send(true);
     let _ = dns.await;
-    for task in provider_tasks {
-        let _ = task.await;
-    }
     if let Some(admin) = admin {
         admin.stopped().await;
     }
+    crate::datadir::remove_own_spool(&args.data_dir);
+    drop(lock);
     tracing::info!("rdock stopped");
     Ok(ExitCode::SUCCESS)
+}
+
+/// Records a refused or failed upgrade asked for by `SIGUSR2` in the audit log.
+fn audit_signal_failure(admin: Option<&rdock_admin::Running>, outcome: &crate::upgrade::Outcome) {
+    let document = match outcome {
+        crate::upgrade::Outcome::Serving(..) => return,
+        crate::upgrade::Outcome::Refused(d) | crate::upgrade::Outcome::Failed(d) => d,
+    };
+    if let Some(admin) = admin {
+        admin.audit(rdock_admin::audit::Event {
+            outcome: rdock_admin::audit::Outcome::Failed,
+            resource: document["sha256"].as_str().map(|h| format!("sha256:{h}")),
+            reason: document["error"].as_str().map(str::to_owned),
+            ..rdock_admin::audit::Event::new("signal", "signal", "upgrade")
+        });
+    }
 }
 
 fn log_start(source: &Source, plugins: &rdock_plugin_api::Registry) {
@@ -274,6 +739,7 @@ async fn start_admin(
     args: &RunArgs,
     engine: &Arc<Engine>,
     stop: watch::Receiver<bool>,
+    sockets: rdock_admin::Sockets,
 ) -> anyhow::Result<Option<rdock_admin::Running>> {
     let config = engine.config().await.unwrap_or_default();
     let admin = config.admin;
@@ -285,29 +751,14 @@ async fn start_admin(
         .socket
         .clone()
         .unwrap_or_else(|| socket_path(&args.data_dir));
-    let settings = rdock_admin::Settings {
-        address,
-        tls: admin.tls.map(|tls| rdock_admin::TlsFiles {
-            cert_file: tls.cert_file,
-            key_file: tls.key_file,
-        }),
-        socket: Some(socket.clone()),
-        allowed_hosts: admin.allowed_hosts,
-        threads: usize::from(admin.threads),
-        state_dir: args.data_dir.join("admin"),
-        passwords: admin.passwords,
-        sessions: admin.sessions,
-        mfa: admin.mfa,
-        dashboard: admin.dashboard,
-        tokens: admin.tokens,
-        metrics_unauthenticated_on_loopback: admin.metrics_unauthenticated_on_loopback,
-        trust_forwarded_on_loopback: admin.trust_forwarded_on_loopback,
-        audit_dir: args.data_dir.join("audit"),
-        audit: admin.audit,
-        api_writes: admin.api_writes,
-        feeds: Some(engine.feeds()),
-    };
-    let running = rdock_admin::start(settings, engine.clone(), stop)?;
+    let mut admin = admin;
+    // With a control plane, the configuration comes from bundles: local API writes are off,
+    // as in GitOps mode (ADR-0031).
+    if config.cluster.as_ref().is_some_and(|c| c.control.is_some()) {
+        admin.api_writes = false;
+    }
+    let settings = admin_settings(admin, &args.data_dir, socket.clone(), Some(engine.feeds()));
+    let running = rdock_admin::start_with(settings, engine.clone(), stop, sockets)?;
     #[cfg(feature = "fault-injection")]
     if let Some(fault) = rdock_admin::fault::from_env()
         && fault.kind == rdock_admin::fault::Kind::WriteLock
@@ -317,6 +768,37 @@ async fn start_admin(
     }
     tracing::info!(%address, socket = %socket.display(), "admin API listening");
     Ok(Some(running))
+}
+
+/// The admin API's settings from `admin` (the data plane's and the control plane's).
+pub(crate) fn admin_settings(
+    admin: rdock_model::settings::Admin,
+    data_dir: &Path,
+    socket: PathBuf,
+    feeds: Option<rdock_observability::feed::Feeds>,
+) -> rdock_admin::Settings {
+    rdock_admin::Settings {
+        address: admin_address(&admin.listener),
+        tls: admin.tls.map(|tls| rdock_admin::TlsFiles {
+            cert_file: tls.cert_file,
+            key_file: tls.key_file,
+        }),
+        socket: Some(socket),
+        allowed_hosts: admin.allowed_hosts,
+        threads: usize::from(admin.threads),
+        state_dir: data_dir.join("admin"),
+        passwords: admin.passwords,
+        sessions: admin.sessions,
+        mfa: admin.mfa,
+        dashboard: admin.dashboard,
+        tokens: admin.tokens,
+        metrics_unauthenticated_on_loopback: admin.metrics_unauthenticated_on_loopback,
+        trust_forwarded_on_loopback: admin.trust_forwarded_on_loopback,
+        audit_dir: data_dir.join("audit"),
+        audit: admin.audit,
+        api_writes: admin.api_writes,
+        feeds,
+    }
 }
 
 fn start_watcher(engine: &Engine, changed: mpsc::Sender<()>) -> Option<FileWatcher> {
@@ -370,5 +852,24 @@ mod tests {
             hard
         };
         assert_eq!(soft, wanted);
+    }
+
+    #[test]
+    fn a_key_file_others_can_read_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("quic.key");
+        assert!(super::read_private(&path).unwrap().is_none());
+        std::fs::write(&path, "key\n").unwrap();
+        for mode in [0o644, 0o640, 0o604, 0o660] {
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+            let err = super::read_private(&path).unwrap_err().to_string();
+            assert!(err.contains("group or others"), "{mode:o}: {err}");
+        }
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(
+            super::read_private(&path).unwrap().as_deref(),
+            Some("key\n")
+        );
     }
 }

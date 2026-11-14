@@ -22,6 +22,11 @@ pub struct Route {
     /// Higher priorities are evaluated first. `0` uses the rule length, like Traefik.
     #[serde(default)]
     pub priority: i64,
+    /// Which requests an `admission` middleware sheds first under overload: `sheddable`,
+    /// then `normal` (the default), `critical` last. Unrelated to `priority`, which orders
+    /// matching.
+    #[serde(default, skip_serializing_if = "PriorityClass::is_normal")]
+    pub priority_class: PriorityClass,
     /// Middlewares applied in order (`name` or `name@provider`).
     #[serde(default)]
     pub middlewares: Vec<String>,
@@ -48,6 +53,37 @@ pub struct Route {
     /// Set to `false` to keep the route defined but inactive.
     #[serde(default = "crate::defaults::yes")]
     pub enabled: bool,
+}
+
+/// A route's class for load shedding by `admission` (H-LB-04).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PriorityClass {
+    /// Shed last: may fill the whole limit.
+    Critical,
+    /// The default: may fill `shares.normal` of the limit.
+    #[default]
+    Normal,
+    /// Shed first: may fill `shares.sheddable` of the limit.
+    Sheddable,
+}
+
+impl PriorityClass {
+    /// Whether this is the default (`normal`).
+    #[must_use]
+    pub fn is_normal(&self) -> bool {
+        *self == Self::Normal
+    }
+
+    /// The name used in configuration, metrics and the access log.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Critical => "critical",
+            Self::Normal => "normal",
+            Self::Sheddable => "sheddable",
+        }
+    }
 }
 
 /// Request mirroring (shadow traffic).

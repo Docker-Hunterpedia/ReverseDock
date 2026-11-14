@@ -586,6 +586,20 @@ const fn one() -> f64 {
     1.0
 }
 
+/// The proxy's async runtime (ADR-0031). Read at start: a change takes effect after a restart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct RuntimeSettings {
+    /// Threads that serve connections. Unset: one per CPU the process may use, tokio's
+    /// default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worker_threads: Option<u16>,
+    /// Most threads for blocking work (file reads, DNS lookups by the system resolver).
+    /// Unset: 512, tokio's default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_blocking_threads: Option<u16>,
+}
+
 /// Start-up and shutdown behaviour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -600,5 +614,179 @@ impl Default for Lifecycle {
         Self {
             drain_timeout: Duration::from_secs(8),
         }
+    }
+}
+
+/// In-place binary upgrades (H-PERF-04, ADR-0031): `rdock upgrade` on the admin Unix socket or
+/// `SIGUSR2` hands the listeners to a new process, which serves once it is ready; this one
+/// drains and exits. Linux only; refused when rdock is PID 1 (replace the container instead).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Upgrade {
+    /// The binary `SIGUSR2` and `rdock upgrade` without `--binary` run. Default
+    /// `/usr/local/bin/rdock`, where the systemd unit and the release image install it. It
+    /// must be a regular file owned by root or rdock's user and not writable by the group or
+    /// others, in a directory with the same owners that the group and others cannot write to
+    /// (unless it is sticky, like /tmp).
+    pub binary: PathBuf,
+    /// How long the old process may still serve its open connections (HTTP/1 keep-alive is
+    /// switched off and HTTP/2 clients get GOAWAY at once); the rest are closed then. Default
+    /// 10m (Envoy's drain time); `unlimited` waits for every connection, which keeps an old,
+    /// possibly vulnerable binary serving for as long as a client holds a connection.
+    pub drain: DrainLimit,
+    /// How long the new process may take to report that it is ready, and then that it serves;
+    /// otherwise the old process resumes and the upgrade fails. Default 30s.
+    pub start_timeout: Duration,
+    /// minisign public keys (`RWQ…`); when set, `<binary>.minisig` must be a valid signature of
+    /// the binary by one of them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub trusted_keys: Vec<String>,
+}
+
+impl Default for Upgrade {
+    fn default() -> Self {
+        Self {
+            binary: PathBuf::from("/usr/local/bin/rdock"),
+            drain: DrainLimit::Within(Duration::from_secs(600)),
+            start_timeout: Duration::from_secs(30),
+            trusted_keys: Vec::new(),
+        }
+    }
+}
+
+/// The proxy's zone and the default locality preference of services (H-HA-05, ADR-0031).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Locality {
+    /// The zone this proxy runs in, e.g. `eu-west-1a`. When omitted, the `RDOCK_ZONE`
+    /// environment variable gives it; with neither, `prefer` has no effect.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zone: Option<String>,
+    /// `prefer`: services use only backends of this zone while at least one of them is
+    /// available, and every backend otherwise (Kubernetes `PreferSameZone`). `off` (the
+    /// default, as Kubernetes distributes traffic evenly by default) ignores zones. A
+    /// service's own `locality.mode` overrides this.
+    pub mode: crate::service::LocalityMode,
+}
+
+/// GeoIP databases in the MaxMind DB format (H-SEC-04, ADR-0031): MaxMind GeoLite2 or GeoIP2,
+/// DB-IP Lite or IPinfo Lite files that you download and keep current. The files are read into
+/// memory and read again when they change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct GeoIp {
+    /// A country database (`.mmdb`): gives `ClientCountry` and `ClientContinent`. A file that
+    /// also carries ASNs (IPinfo Lite) gives `ClientASN` as well.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub database: Option<PathBuf>,
+    /// An ASN database (`.mmdb`, e.g. GeoLite2-ASN) for `ClientASN`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asn_database: Option<PathBuf>,
+    /// The oldest database build accepted, by the build time in its metadata. Default 30 days:
+    /// the GeoLite End User License Agreement (updated 2026-02-12) requires deleting a
+    /// version within thirty days of a newer release.
+    pub max_age: Duration,
+    /// What an older database does: `warn` (the default) logs a warning and keeps using it;
+    /// `refuse` refuses to load it, so the configuration that needs it is refused.
+    pub on_stale: OnStale,
+    /// Opt-in access-log fields; both off by default, since a location tied to an IP address
+    /// is personal data in many jurisdictions.
+    pub log: GeoIpLog,
+}
+
+impl Default for GeoIp {
+    fn default() -> Self {
+        Self {
+            database: None,
+            asn_database: None,
+            max_age: Duration::from_secs(30 * 24 * 60 * 60),
+            on_stale: OnStale::Warn,
+            log: GeoIpLog::default(),
+        }
+    }
+}
+
+/// What a GeoIP database older than `max_age` does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OnStale {
+    /// Log a warning and keep using it.
+    #[default]
+    Warn,
+    /// Refuse to load it.
+    Refuse,
+}
+
+/// GeoIP fields in the access log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct GeoIpLog {
+    /// Log `country` (ISO 3166-1 alpha-2).
+    pub country: bool,
+    /// Log `asn`.
+    pub asn: bool,
+}
+
+/// A drain bound: a duration, or `unlimited`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DrainLimit {
+    /// At most this long.
+    Within(Duration),
+    /// Until the last connection closes.
+    Unlimited,
+}
+
+impl DrainLimit {
+    /// The bound, `None` when unlimited.
+    #[must_use]
+    pub fn get(self) -> Option<std::time::Duration> {
+        match self {
+            Self::Within(d) => Some(d.as_std()),
+            Self::Unlimited => None,
+        }
+    }
+}
+
+impl Serialize for DrainLimit {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Within(d) => d.serialize(serializer),
+            Self::Unlimited => serializer.serialize_str("unlimited"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for DrainLimit {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Word(String),
+            Other(serde_json::Value),
+        }
+        match Raw::deserialize(deserializer)? {
+            Raw::Word(w) if w == "unlimited" => Ok(Self::Unlimited),
+            Raw::Word(w) => w
+                .parse::<Duration>()
+                .map(Self::Within)
+                .map_err(serde::de::Error::custom),
+            Raw::Other(v) => serde_json::from_value::<Duration>(v)
+                .map(Self::Within)
+                .map_err(serde::de::Error::custom),
+        }
+    }
+}
+
+impl JsonSchema for DrainLimit {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("DrainLimit")
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let duration = generator.subschema_for::<Duration>();
+        schemars::json_schema!({
+            "description": "A duration, or `unlimited`.",
+            "anyOf": [ duration, { "type": "string", "enum": ["unlimited"] } ]
+        })
     }
 }

@@ -74,6 +74,44 @@ impl TestCa {
         }
     }
 
+    /// Issues an X.509-SVID-like client certificate with `uris` as URI SANs (one, for a valid
+    /// SVID), a CA when `ca`; written to `dir/<file>.crt|key`, each file atomically.
+    pub fn issue_svid(&self, dir: &Path, file: &str, uris: &[&str], ca: bool) -> Issued {
+        let key = KeyPair::generate().unwrap();
+        let mut params = CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.subject_alt_names = uris
+            .iter()
+            .map(|u| SanType::URI((*u).try_into().unwrap()))
+            .collect();
+        params.not_before = rcgen::date_time_ymd(2026, 1, 1);
+        params.not_after = rcgen::date_time_ymd(2036, 1, 1);
+        if ca {
+            params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        } else {
+            params.key_usages = vec![rcgen::KeyUsagePurpose::DigitalSignature];
+            params.extended_key_usages = vec![
+                rcgen::ExtendedKeyUsagePurpose::ServerAuth,
+                rcgen::ExtendedKeyUsagePurpose::ClientAuth,
+            ];
+        }
+        let cert = params.signed_by(&key, &self.issuer).unwrap();
+        let cert_pem = cert.pem();
+        let key_pem = key.serialize_pem();
+        let cert_path = dir.join(format!("{file}.crt"));
+        let key_path = dir.join(format!("{file}.key"));
+        for (path, text) in [(&cert_path, &cert_pem), (&key_path, &key_pem)] {
+            let tmp = path.with_extension("tmp");
+            std::fs::write(&tmp, text).unwrap();
+            std::fs::rename(&tmp, path).unwrap();
+        }
+        Issued {
+            cert: cert_path,
+            key: key_path,
+            cert_pem,
+            key_pem,
+        }
+    }
+
     /// A rustls client configuration trusting this CA, offering `alpn` and presenting the
     /// client certificate `client`.
     pub fn client_config_with_cert(

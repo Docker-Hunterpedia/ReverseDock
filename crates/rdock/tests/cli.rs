@@ -205,6 +205,31 @@ fn the_stock_binary_registers_no_plugins_and_says_so() {
         serde_json::Value::Null
     };
     assert_eq!(info["wasm_abi"], wasm_abi);
+    assert_eq!(info["http3"], cfg!(feature = "http3"));
+    let text = stdout(&rdock(&["version"]));
+    let http3 = if cfg!(feature = "http3") {
+        "HTTP/3: quinn and h3 (experimental)"
+    } else {
+        "HTTP/3: not in this build"
+    };
+    assert!(text.contains(http3), "{text}");
+}
+
+#[cfg(not(feature = "http3"))]
+#[test]
+fn http3_needs_a_build_with_the_feature() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("rdock.yaml");
+    std::fs::write(
+        &file,
+        "listeners:\n  websecure: { address: \":443\", tls: {}, http3: { enabled: true } }\n  web: { address: \":80\" }\n",
+    )
+    .unwrap();
+    let text = stdout(&rdock(&["validate", file.to_str().unwrap()]));
+    assert!(
+        text.contains("warning: listeners.websecure.http3.enabled: HTTP/3 (`http3.enabled`): this build does not include HTTP/3; build with --features http3"),
+        "{text}"
+    );
 }
 
 #[cfg(not(feature = "wasm"))]

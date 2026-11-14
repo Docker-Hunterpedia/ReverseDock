@@ -133,7 +133,10 @@ fn policies_build_and_resolver_swaps() {
     resolver.swap(CertIndex::build(&certs, None));
     assert!(resolver.index().covers("a.test"));
     for policy in [TlsPolicy::Modern, TlsPolicy::Intermediate] {
-        let config = server_config(policy, resolver.clone(), None).unwrap();
+        let resumption = crate::Resumption::standalone().unwrap();
+        let config = server_config(policy, resolver.clone(), None, &resumption).unwrap();
+        // 0-RTT stays off (RFC 8446 §2.3, §8).
+        assert_eq!(config.max_early_data_size, 0);
         assert_eq!(
             config.alpn_protocols,
             vec![b"h2".to_vec(), b"http/1.1".to_vec(), b"acme-tls/1".to_vec()]
@@ -233,5 +236,13 @@ fn scoped_certificates_serve_their_listener_only() {
     assert!(resolver.lookup_for("web", Some("x.other.test")).is_none());
     assert!(!resolver.covers("x.other.test"));
     // The per-listener resolver builds a server configuration like the shared one.
-    assert!(server_config(TlsPolicy::Intermediate, resolver.for_listener("gw-a"), None).is_ok());
+    assert!(
+        server_config(
+            TlsPolicy::Intermediate,
+            resolver.for_listener("gw-a"),
+            None,
+            &crate::Resumption::standalone().unwrap()
+        )
+        .is_ok()
+    );
 }

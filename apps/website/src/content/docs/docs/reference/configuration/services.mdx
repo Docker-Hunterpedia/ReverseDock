@@ -2,7 +2,7 @@
 title: services
 description: "Backend pools that routes send traffic to."
 sidebar:
-  order: 15
+  order: 20
 ---
 
 import Status from '../../../../../components/Status.astro';
@@ -27,13 +27,40 @@ Backend servers. Set this, `split` or `respond`.
 
 **Type:** `boolean` · **Default:** `false`
 
-Only used when no primary backend is available.
+Only used when no primary backend is available: the same as `priority: 1`.
+
+### `services.<name>.backends[].for_zones`
+
+**Type:** list of `string`
+
+Zones whose proxies should use this backend under `locality: { mode: prefer }`, instead of its own `zone` (Kubernetes topology hints, `hints.forZones`).
+
+### `services.<name>.backends[].priority`
+
+**Type:** `integer`
+
+Priority tier from 0 (the default, used first) to 7. See the service's `failover`. Not together with `backup`.
 
 ### `services.<name>.backends[].weight`
 
 **Type:** `integer` · **Default:** `1`
 
 Relative share of traffic.
+
+### `services.<name>.backends[].zone`
+
+**Type:** `string`
+
+The zone the backend runs in, e.g. `eu-west-1a`, for `locality: { mode: prefer }`.
+
+## `services.<name>.failover`
+
+**Type:** `strict` · `spill` · **Default:** `strict`
+
+How traffic moves between backend `priority` tiers. `strict` (the default): a tier gets traffic only when every tier above it has no available backend. `spill`: a tier keeps `healthy share × overprovisioning` of the traffic (at most all of it) and the rest goes to the next tier, as Envoy's priority levels do.
+
+- `strict`: The next tier only when every tier above has no available backend.
+- `spill`: Tiers share traffic by their health and the overprovisioning factor.
 
 ## `services.<name>.health`
 
@@ -144,6 +171,12 @@ Ejection based on observed failures.
 
 How long an ejected backend stays out before one request tries it again; doubled for each ejection in a row, up to 5 minutes.
 
+#### `services.<name>.health.passive.ejection_jitter`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `0s`
+
+Up to this much is added at random to each ejection time, so backends ejected by many instances do not all return at once (Envoy's `max_ejection_time_jitter`). Default 0s.
+
 #### `services.<name>.health.passive.failures`
 
 **Type:** `integer` · **Default:** `5`
@@ -155,6 +188,78 @@ Failures within `window` that eject a backend.
 **Type:** `integer` · **Default:** `50`
 
 Largest share of the pool ejected at once, in percent.
+
+#### `services.<name>.health.passive.outlier`
+
+**Type:** object
+
+Statistical detectors that compare backends with each other once per interval and eject the outliers through the same ejection as `failures` (back-off, `max_ejection_percent`, trial request).
+
+#### `services.<name>.health.passive.outlier.failure_percentage`
+
+**Type:** object
+
+Ejects a backend whose failures reach `threshold` percent of its requests.
+
+#### `services.<name>.health.passive.outlier.failure_percentage.enabled`
+
+**Type:** `boolean` · **Default:** `false`
+
+Turns the detector on. Default `false`.
+
+#### `services.<name>.health.passive.outlier.failure_percentage.minimum_hosts`
+
+**Type:** `integer` · **Default:** `5`
+
+Backends with enough requests needed before anything is evaluated. Default 5; at least 3.
+
+#### `services.<name>.health.passive.outlier.failure_percentage.request_volume`
+
+**Type:** `integer` · **Default:** `50`
+
+Requests in the interval for a backend to count. Default 50.
+
+#### `services.<name>.health.passive.outlier.failure_percentage.threshold`
+
+**Type:** `integer` · **Default:** `85`
+
+Failure share that ejects, in percent. Default 85.
+
+#### `services.<name>.health.passive.outlier.interval`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `10s`
+
+How often the detectors look at the counts of the last interval. Default 10s (Envoy).
+
+#### `services.<name>.health.passive.outlier.success_rate`
+
+**Type:** object
+
+Ejects a backend whose success rate is below `mean − stdev_factor × σ` of the others.
+
+#### `services.<name>.health.passive.outlier.success_rate.enabled`
+
+**Type:** `boolean` · **Default:** `false`
+
+Turns the detector on. Default `false`.
+
+#### `services.<name>.health.passive.outlier.success_rate.minimum_hosts`
+
+**Type:** `integer` · **Default:** `5`
+
+Backends with enough requests needed before anything is evaluated. Default 5; at least 3.
+
+#### `services.<name>.health.passive.outlier.success_rate.request_volume`
+
+**Type:** `integer` · **Default:** `100`
+
+Requests in the interval for a backend to count. Default 100.
+
+#### `services.<name>.health.passive.outlier.success_rate.stdev_factor`
+
+**Type:** [`Factor`](/docs/reference/configuration/#factor) · **Default:** `1.9`
+
+Multiplier of the standard deviation. Default 1.9 (Envoy's 1900 / 1000).
 
 #### `services.<name>.health.passive.statuses`
 
@@ -170,9 +275,9 @@ Sliding window for counting failures.
 
 ### `services.<name>.health.slow_start`
 
-**Type:** [`Duration`](/docs/reference/configuration/#duration)
+**Type:** [`SlowStart`](/docs/reference/configuration/#slowstart)
 
-A backend that becomes healthy ramps up its weight over this time.
+A backend that becomes healthy again ramps up its weight: a duration such as `30s`, or `{ window, aggression, min_weight_percent, on }`. Not with hash policies.
 
 ### `services.<name>.health.when_all_down`
 
@@ -183,11 +288,39 @@ What happens when no backend is healthy.
 - `fail_open`: Send to every backend anyway: a broken health check must not cause an outage.
 - `fail_closed`: Answer `503`.
 
+## `services.<name>.hedge`
+
+**Type:** object
+
+Hedged requests: a second attempt while the first is still waiting. Planned, not supported: Pingora 0.9 cannot race two upstream attempts of one request. Use `retries.per_try_timeout` for stalled attempts.
+
+:::note[Planned for a later version]
+Hedged requests (a second upstream attempt while the first runs): accepted by `rdock validate` with a warning, refused by `rdock run` until a later version.
+:::
+
+### `services.<name>.hedge.delay`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration)
+
+Time without a response after which the hedge would be sent.
+
+### `services.<name>.hedge.max_attempts`
+
+**Type:** `integer`
+
+Attempts in flight at most, the first included.
+
 ## `services.<name>.load_balancer`
 
 **Type:** object · **Default:** `{"hash_on":null,"policy":"round_robin"}`
 
 How a backend is chosen for each request.
+
+### `services.<name>.load_balancer.decay`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration)
+
+`peak_ewma`: time constant of the latency average. Default 10s (Finagle's and Linkerd's `decay`).
 
 ### `services.<name>.load_balancer.hash_on`
 
@@ -195,9 +328,18 @@ How a backend is chosen for each request.
 
 Header or cookie name for `header_hash` and `cookie_hash`.
 
+### `services.<name>.load_balancer.measure`
+
+**Type:** `first_byte` · `last_byte`
+
+`peak_ewma`: what a latency sample measures. Default `first_byte`.
+
+- `first_byte`: Time to the response headers (NGINX `least_time header`): a long download or a slow client does not make a backend look slow.
+- `last_byte`: Time to the end of the response (NGINX `last_byte`). Upgraded connections (WebSocket) give no sample.
+
 ### `services.<name>.load_balancer.policy`
 
-**Type:** `round_robin` · `random` · `least_conn` · `least_requests` · `p2c` · `ip_hash` · `header_hash` · `cookie_hash` · **Default:** `round_robin`
+**Type:** `round_robin` · `random` · `least_conn` · `least_requests` · `p2c` · `ip_hash` · `header_hash` · `cookie_hash` · `peak_ewma` · **Default:** `round_robin`
 
 Selection policy.
 
@@ -209,6 +351,22 @@ Selection policy.
 - `ip_hash`: Consistent hash of the client IP (Traefik's `hrw`).
 - `header_hash`: Consistent hash of a request header (`hash_on`).
 - `cookie_hash`: Consistent hash of a cookie (`hash_on`).
+- `peak_ewma`: Power of two distinct random choices over `latency × (in_flight + 1) / weight`, with a latency average that reacts to peaks at once (Finagle's and Linkerd's Peak-EWMA).
+
+## `services.<name>.locality`
+
+**Type:** object
+
+Prefer backends in the proxy's own zone (`locality` at the top level sets the zone). Omitted, the top-level `locality.mode` applies.
+
+### `services.<name>.locality.mode`
+
+**Type:** `off` · `prefer` · **Required**
+
+`prefer` or `off`.
+
+- `off`: Every available backend, whatever its zone.
+- `prefer`: Only backends in the proxy's zone while at least one of them is available; all otherwise (Kubernetes `PreferSameZone`).
 
 ## `services.<name>.max_connections_per_backend`
 
@@ -221,6 +379,12 @@ Requests in flight to one backend; a backend at the limit gets no more until one
 **Type:** `integer`
 
 Requests in flight across the pool; more are answered `503` (circuit breaker).
+
+## `services.<name>.overprovisioning`
+
+**Type:** [`Factor`](/docs/reference/configuration/#factor)
+
+With `failover: spill`: how much more than its share each tier can carry. Default 1.4 (Envoy's `overprovisioning_factor`): a tier keeps all traffic until fewer than about 71 % of its backends are available.
 
 ## `services.<name>.pass_host_header`
 
@@ -264,6 +428,12 @@ Retries in flight may be at most this share of the requests in flight, in percen
 
 Failures that are retried.
 
+### `services.<name>.retries.per_try_timeout`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration)
+
+Abandons an attempt that has not finished a read for this long and retries it on another backend, within the budget and only where a retry is allowed (`on` must list `timeout`). It replaces `timeouts.read` for every read of such an attempt, the wait for the response headers and each pause of the response body; the last attempt and requests that cannot be retried wait `timeouts.read`.
+
 ### `services.<name>.retries.retry_non_idempotent`
 
 **Type:** `boolean` · **Default:** `false`
@@ -272,13 +442,18 @@ Also retry non-idempotent methods such as POST. Only safe if backends are idempo
 
 ## `services.<name>.scheme`
 
-**Type:** `http` · `https` · `h2c` · **Default:** `http`
+**Type:** `http` · `https` · `h2c` · `h3` · **Default:** `http`
 
 Protocol spoken to the backends. gRPC uses `h2c` (cleartext) or `https`.
 
 - `http`: HTTP/1.1 in cleartext.
 - `https`: HTTP/1.1 or HTTP/2 over TLS.
 - `h2c`: HTTP/2 in cleartext (gRPC without TLS).
+- `h3`: HTTP/3 over QUIC. Not supported in this version (planned, ADR-0032): Pingora 0.9 has no QUIC connector.
+
+:::note[Planned for a later version]
+HTTP/3 to backends (scheme: h3): accepted by `rdock validate` with a warning, refused by `rdock run` until a later version.
+:::
 
 ## `services.<name>.split`
 

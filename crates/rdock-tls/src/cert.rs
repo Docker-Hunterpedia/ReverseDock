@@ -102,6 +102,41 @@ pub fn load_certificate(
     })
 }
 
+/// Builds a certificate from a PEM chain (leaf first) and an unencrypted PEM private key held
+/// in memory (a cluster store); `origin` names where they came from in errors.
+pub fn certificate_from_pem(
+    name: &str,
+    chain_pem: &[u8],
+    key_pem: &[u8],
+    origin: &Path,
+) -> Result<LoadedCert, CertError> {
+    let chain: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(chain_pem)
+        .collect::<Result<_, _>>()
+        .map_err(|_| CertError::NoCertificate(origin.to_owned()))?;
+    if chain.is_empty() {
+        return Err(CertError::NoCertificate(origin.to_owned()));
+    }
+    let key =
+        PrivateKeyDer::from_pem_slice(key_pem).map_err(|_| CertError::NoKey(origin.to_owned()))?;
+    let signing_key = any_supported_type(&key).map_err(|e| CertError::KeyMismatch {
+        path: origin.to_owned(),
+        reason: e.to_string(),
+    })?;
+    let certified = CertifiedKey::new(chain, signing_key);
+    certified.keys_match().map_err(|e| CertError::KeyMismatch {
+        path: origin.to_owned(),
+        reason: e.to_string(),
+    })?;
+    let leaf = leaf_facts(origin, &certified.cert[0])?;
+    Ok(LoadedCert {
+        name: name.to_owned(),
+        key: Arc::new(certified),
+        names: leaf.names,
+        not_before: leaf.not_before,
+        not_after: leaf.not_after,
+    })
+}
+
 fn read(path: &Path) -> Result<Vec<u8>, CertError> {
     std::fs::read(path).map_err(|source| CertError::Read {
         path: path.to_owned(),

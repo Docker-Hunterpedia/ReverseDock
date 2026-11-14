@@ -101,6 +101,8 @@ async fn serve(
             plugins: &rdock_plugin_api::Registry::new(),
             metrics: None,
             quotas: None,
+            abuse: None,
+            shared_limits: None,
         },
     );
     let errors: Vec<_> = compiled

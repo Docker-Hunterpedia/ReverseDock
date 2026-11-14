@@ -25,6 +25,7 @@ use crate::validate::load_error;
 use crate::zero_config::{self, Source};
 
 mod api;
+pub(crate) mod control;
 mod vault;
 
 pub(crate) use vault::{read_once as read_vault_once, references as vault_references};
@@ -37,6 +38,8 @@ pub(crate) enum Origin {
     File,
     /// The last-known-good copy, because the file could not be used at start.
     LastKnownGood,
+    /// The control plane's bundle with this instance's own sections (ADR-0031).
+    Control,
 }
 
 impl Origin {
@@ -45,6 +48,7 @@ impl Origin {
         match self {
             Self::File => "file",
             Self::LastKnownGood => "last-known-good",
+            Self::Control => "control",
         }
     }
 }
@@ -167,6 +171,30 @@ pub(crate) struct Engine {
     unbound: tokio::sync::watch::Sender<Unbound>,
     /// The Vault client and the state of the last read of `${vault:…}` references.
     vault: vault::VaultState,
+    /// Whether the admin API runs: decided by the first configuration (`run` starts it then),
+    /// unchanged until a restart.
+    admin_at_boot: std::sync::OnceLock<bool>,
+    /// The proxy runtime's threads, fixed at start (`runtime` needs a restart).
+    threads: std::sync::OnceLock<crate::run::Threads>,
+    /// While a binary upgrade hands over (and in a new process until it serves), the tasks that
+    /// write shared state (ACME, the local CA, the Cloudflare range sync, alerts) are given
+    /// nothing to do; the last applied settings wait here.
+    background: Mutex<Background>,
+    /// Where `rdock upgrade` requests go (the run loop, which performs the upgrade).
+    upgrades: std::sync::OnceLock<tokio::sync::mpsc::Sender<crate::upgrade::Trigger>>,
+    /// Binary upgrades behind this process.
+    pub(crate) upgrade_generation: std::sync::atomic::AtomicU64,
+    /// `cluster` as read at start; a change needs a restart.
+    cluster_at_start: Option<rdock_model::cluster::Cluster>,
+    /// The control plane's bundle and the agent's state, with `cluster.control`.
+    pub(crate) control: Option<control::ControlState>,
+}
+
+/// The background tasks' state: paused or not, and what they last were given.
+#[derive(Default)]
+struct Background {
+    paused: bool,
+    last: Option<(Config, rdock_acme::Plan, Vec<String>)>,
 }
 
 /// What the certificate manager should do for an applied configuration: nothing when
@@ -200,7 +228,12 @@ fn unix_ms() -> u64 {
 }
 
 impl Engine {
-    pub(crate) fn new(source: Source, data_dir: &Path, plane: Arc<DataPlane>) -> Self {
+    pub(crate) fn new(
+        source: Source,
+        data_dir: &Path,
+        plane: Arc<DataPlane>,
+        cluster: Option<&crate::cluster::ClusterContext>,
+    ) -> Self {
         let (alerts, receiver) =
             tokio::sync::watch::channel(rdock_model::settings::Alerts::default());
         plane
@@ -220,6 +253,7 @@ impl Engine {
                 dns: Arc::new(rdock_dns_providers::Providers::new(Arc::new(
                     rdock_cloudflare::dns::Providers,
                 ))),
+                cluster: cluster.and_then(|c| c.acme.clone()),
             }),
             cloudflare: rdock_cloudflare::IpSync::spawn(
                 rdock_cloudflare::Options::new(data_dir.join("cloudflare")),
@@ -247,7 +281,145 @@ impl Engine {
             alerts,
             unbound: tokio::sync::watch::Sender::new(Unbound::new()),
             vault: vault::VaultState::default(),
+            admin_at_boot: std::sync::OnceLock::new(),
+            threads: std::sync::OnceLock::new(),
+            background: Mutex::new(Background::default()),
+            upgrades: std::sync::OnceLock::new(),
+            upgrade_generation: std::sync::atomic::AtomicU64::new(0),
+            cluster_at_start: cluster.map(|c| c.settings.clone()),
+            control: cluster.and_then(|c| {
+                c.channel.as_ref().map(|channel| {
+                    let identity = channel.identity();
+                    control::ControlState::load(
+                        data_dir,
+                        identity.instance,
+                        identity.cluster_id,
+                        c.settings
+                            .control
+                            .as_ref()
+                            .map(|ctl| ctl.url.as_url().to_string())
+                            .unwrap_or_default(),
+                    )
+                })
+            }),
         }
+    }
+
+    /// Where `rdock upgrade` requests from the admin API go.
+    pub(crate) fn set_upgrades(&self, sender: tokio::sync::mpsc::Sender<crate::upgrade::Trigger>) {
+        let _ = self.upgrades.set(sender);
+    }
+
+    /// Gives the shared-state writers (ACME, the local CA, the Cloudflare range sync, alerts)
+    /// nothing to do: ACME and the local CA drop their plans (ACME releases its storage lock),
+    /// the range sync stops and alerts go nowhere. Applied configurations are remembered and
+    /// handed to them on [`Self::resume_background`].
+    pub(crate) fn pause_background(&self) {
+        let mut background = self
+            .background
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        background.paused = true;
+        drop(background);
+        let mut idle = rdock_acme::Plan {
+            acme: rdock_model::acme::Acme::default(),
+            requests: Vec::new(),
+            http01: false,
+            tls_alpn01: false,
+        };
+        if let Some((_, plan, _)) = &self
+            .background
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .last
+        {
+            idle.acme = plan.acme.clone();
+        }
+        self.acme.update(idle);
+        self.cloudflare.set_enabled(false);
+        self.local_ca.update(Vec::new());
+        self.alerts
+            .send_replace(rdock_model::settings::Alerts::default());
+    }
+
+    /// Hands the last applied configuration to the shared-state writers again.
+    pub(crate) fn resume_background(&self) {
+        let last = {
+            let mut background = self
+                .background
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            background.paused = false;
+            background.last.clone()
+        };
+        if let Some((config, plan, names)) = last {
+            self.update_background(&config, plan, names);
+        }
+    }
+
+    /// Waits (at most `limit`) until the certificate manager has loaded the certificates it
+    /// was asked for, so a process that starts serving after a handover has them.
+    pub(crate) async fn certificates_loaded(&self, limit: Duration) {
+        let wanted = self
+            .background
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .last
+            .as_ref()
+            .map_or(0, |(_, plan, _)| plan.requests.len());
+        let deadline = tokio::time::Instant::now() + limit;
+        while self.acme.status().len() < wanted && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    /// Records the runtime's threads, set once before the first configuration is applied.
+    pub(crate) fn set_threads(&self, threads: crate::run::Threads) {
+        threads.record(self.plane.metrics());
+        let _ = self.threads.set(threads);
+    }
+
+    /// Settings a reload cannot apply to the running process, as warnings: `runtime` (the
+    /// threads are made at start) and the socket options set before `bind` of listeners that
+    /// keep their socket (`reuse_port`, `ipv6_only`). Both take effect after a restart; the
+    /// socket options also when the listener's address changes.
+    async fn restart_only(&self, config: &Config) -> Vec<Diagnostic> {
+        let mut out = Vec::new();
+        if let Some(threads) = self.threads.get()
+            && config.runtime.unwrap_or_default() != threads.settings
+        {
+            out.push(
+                Diagnostic::warning(
+                    "runtime",
+                    format!(
+                        "the runtime's threads are made at start; this change takes effect after a restart (running with {} worker threads and at most {} blocking threads)",
+                        threads.workers, threads.max_blocking
+                    ),
+                )
+                .with_hint("restart rdock to apply it"),
+            );
+        }
+        if config.cluster.as_deref() != self.cluster_at_start.as_ref() {
+            out.push(
+                Diagnostic::warning(
+                    "cluster",
+                    "`cluster` is read at start; this change takes effect after a restart",
+                )
+                .with_hint("restart rdock to apply it"),
+            );
+        }
+        for (listener, field) in self.plane.kept_socket_options().await {
+            out.push(
+                Diagnostic::warning(
+                    format!("{}.socket.{field}", rdock_model::diagnostics::path_key("listeners", &listener)),
+                    format!(
+                        "`{field}` is set before the socket is bound; the running socket keeps its value until rdock restarts or the listener's address changes"
+                    ),
+                )
+                .with_hint("restart rdock to apply it"),
+            );
+        }
+        out
     }
 
     /// The provider listeners the applied configuration left out because their address could
@@ -367,6 +539,9 @@ impl Engine {
 
     /// First load. Falls back to the last-known-good copy when the file cannot be used.
     pub(crate) async fn boot(&self) -> Result<Report, Box<Report>> {
+        if self.control.is_some() {
+            return Box::pin(self.boot_from_control()).await;
+        }
         let report = Box::new(self.reload("start").await);
         if report.applied() {
             return Ok(*report);
@@ -441,6 +616,9 @@ impl Engine {
                 )
                 .await;
         }
+        if self.control.is_some() {
+            return Box::pin(self.reload_with_bundle(loaded, trigger)).await;
+        }
         self.apply(loaded, trigger, Origin::File).await
     }
 
@@ -451,6 +629,22 @@ impl Engine {
         acme_plan: rdock_acme::Plan,
         local_names: Vec<String>,
     ) {
+        {
+            let mut background = self
+                .background
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            background.last = Some((config.clone(), acme_plan.clone(), local_names.clone()));
+            if background.paused {
+                // The live rings follow the configuration even while paused.
+                drop(background);
+                let admin = *self.admin_at_boot.get_or_init(|| config.admin.enabled);
+                let rules = &config.observability.alerts.rules;
+                let thresholds = rules.error_rate.is_some() || rules.latency.is_some();
+                self.plane.live().set_recording(admin, admin || thresholds);
+                return;
+            }
+        }
         self.acme.update(acme_plan);
         self.cloudflare.set_enabled(
             config
@@ -461,6 +655,12 @@ impl Engine {
         self.local_ca.update(local_names);
         self.alerts
             .send_replace(config.observability.alerts.clone());
+        // The live rings are read only by the admin API (routes and services) and the
+        // threshold alerts (services); when nothing reads them, requests do not record.
+        let admin = *self.admin_at_boot.get_or_init(|| config.admin.enabled);
+        let rules = &config.observability.alerts.rules;
+        let thresholds = rules.error_rate.is_some() || rules.latency.is_some();
+        self.plane.live().set_recording(admin, admin || thresholds);
     }
 
     /// Checks error-rate and latency thresholds every 30 seconds against the live rings and
@@ -567,6 +767,7 @@ impl Engine {
             }
         };
         self.update_background(&config, acme_plan, local_names);
+        diagnostics.extend(self.restart_only(&config).await);
         self.unbound.send_if_modified(|current| {
             let changed = *current != unbound;
             if changed {
@@ -1022,6 +1223,32 @@ fn referenced_files(config_path: &Path, config: &Config) -> BTreeSet<PathBuf> {
     for consumer in config.consumers.values() {
         files.extend(consumer.keys_file.clone());
     }
+    // Ticket keys an operator provides are read again when they change (H-PERF-02).
+    for listener in config.listeners.values() {
+        if let Some(tickets) = listener.tls.as_ref().and_then(|t| t.tickets.as_ref())
+            && tickets.enabled
+        {
+            files.extend(tickets.key_file.clone());
+        }
+        // Client CA bundles rotate with the SVIDs they sign (H-SEC-05).
+        if let Some(auth) = listener.tls.as_ref().and_then(|t| t.client_auth.as_ref()) {
+            files.extend(auth.ca_files.iter().cloned());
+        }
+    }
+    // Upstream trust and client certificates, e.g. SVIDs that spiffe-helper or
+    // csi-driver-spiffe rewrite about every hour (H-SEC-05).
+    for service in config.services.values() {
+        if let Some(tls) = &service.tls {
+            files.extend(tls.ca_file.clone());
+            files.extend(tls.cert_file.clone());
+            files.extend(tls.key_file.clone());
+        }
+    }
+    // GeoIP databases are read again when a new release is put in place (H-SEC-04).
+    if let Some(geoip) = &config.geoip {
+        files.extend(geoip.database.clone());
+        files.extend(geoip.asn_database.clone());
+    }
     files
 }
 
@@ -1084,6 +1311,8 @@ impl rdock_admin::Control for Engine {
         serde_json::json!({
             "version": crate::VERSION,
             "commit": crate::COMMIT,
+            "pid": std::process::id(),
+            "upgrade_generation": self.upgrade_generation.load(Ordering::SeqCst),
             "started_at": rdock_observability::rfc3339(self.started_at),
             "ready": self.is_ready(),
             "generation": self.plane.runtime().generation,
@@ -1093,7 +1322,37 @@ impl rdock_admin::Control for Engine {
             "providers": self.provider_status(),
             "certificates": self.acme.status(),
             "secrets": { "vault": self.vault.status() },
+            "cluster": self.control.as_ref().map(control::ControlState::status),
+            "runtime": self.threads.get().map(|t| serde_json::json!({
+                "worker_threads": t.workers,
+                "max_blocking_threads": t.max_blocking,
+            })),
             "last_reload": last,
+        })
+    }
+
+    async fn upgrade(&self, request: rdock_admin::UpgradeRequest) -> rdock_admin::UpgradeOutcome {
+        let Some(sender) = self.upgrades.get() else {
+            return rdock_admin::UpgradeOutcome::Refused(
+                serde_json::json!({ "error": "this process cannot upgrade" }),
+            );
+        };
+        let (reply, outcome) = tokio::sync::oneshot::channel();
+        let trigger = crate::upgrade::Trigger {
+            binary: request.binary,
+            allow_downgrade: request.allow_downgrade,
+            actor: request.actor,
+            reply: Some(reply),
+        };
+        if sender.try_send(trigger).is_err() {
+            return rdock_admin::UpgradeOutcome::Refused(
+                serde_json::json!({ "error": "an upgrade is already in progress" }),
+            );
+        }
+        outcome.await.unwrap_or_else(|_| {
+            rdock_admin::UpgradeOutcome::Refused(
+                serde_json::json!({ "error": "rdock is shutting down" }),
+            )
         })
     }
 
@@ -1116,9 +1375,19 @@ impl rdock_admin::Control for Engine {
         (api::document(&self.api_fragment()), self.api_etag())
     }
 
+    async fn tenants(&self) -> rdock_model::tenant::Tenants {
+        self.applied
+            .lock()
+            .await
+            .config
+            .as_ref()
+            .map(|c| c.tenants.clone())
+            .unwrap_or_default()
+    }
+
     async fn dry_run(&self, candidate: Value) -> Result<(bool, Value), String> {
         let fragment = api::parse(candidate)?;
-        let (ok, diagnostics) = self.api_dry_run(fragment);
+        let (ok, diagnostics) = self.api_dry_run(&fragment);
         Ok((ok, serde_json::to_value(diagnostics).unwrap_or(Value::Null)))
     }
 
@@ -1128,7 +1397,7 @@ impl rdock_admin::Control for Engine {
             Err(err) => return rdock_admin::ApiWrite::Invalid(err),
         };
         let report = |r: &Report| serde_json::to_value(r).unwrap_or(Value::Null);
-        match self.api_write(fragment, &if_match).await {
+        match Box::pin(self.api_write(fragment, &if_match)).await {
             api::Write::Applied(r) => rdock_admin::ApiWrite::Applied {
                 report: report(&r),
                 etag: self.api_etag(),
@@ -1300,6 +1569,40 @@ impl rdock_admin::Control for Engine {
         reset
     }
 
+    async fn bans(&self) -> Value {
+        let now = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let at = |secs: i64| {
+            rdock_observability::rfc3339(
+                std::time::UNIX_EPOCH + Duration::from_secs(u64::try_from(secs).unwrap_or(0)),
+            )
+        };
+        let bans: Vec<Value> = self
+            .plane
+            .abuse()
+            .bans()
+            .into_iter()
+            .map(|(middleware, ban)| {
+                serde_json::json!({
+                    "middleware": middleware,
+                    "key": ban.key,
+                    "since": at(ban.since),
+                    "until": at(ban.until),
+                    "remaining_seconds": u64::try_from(ban.until).unwrap_or(0).saturating_sub(now),
+                })
+            })
+            .collect();
+        serde_json::json!({ "bans": bans })
+    }
+
+    async fn unban(&self, key: String, middleware: Option<String>) -> usize {
+        let removed = self.plane.abuse().unban(&key, middleware.as_deref());
+        tracing::info!(key = %key, removed, "abuse ban lifted through the admin API");
+        removed
+    }
+
     async fn set_drained(&self, service: String, backend: String, drained: bool) -> bool {
         let runtime = self.plane.runtime();
         let Some(service) = runtime.services.get(&service) else {
@@ -1453,7 +1756,12 @@ mod tests {
         .unwrap();
         let metrics = rdock_observability::Metrics::new("test", "test").unwrap();
         let plane = Arc::new(DataPlane::new(metrics, Runtime::empty()));
-        let engine = Arc::new(Engine::new(Source::File(config), dir.path(), plane.clone()));
+        let engine = Arc::new(Engine::new(
+            Source::File(config),
+            dir.path(),
+            plane.clone(),
+            None,
+        ));
         // Something else holds these ports: a TCP one and a UDP one.
         let busy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let busy_port = busy.local_addr().unwrap().port();

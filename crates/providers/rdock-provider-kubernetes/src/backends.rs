@@ -86,14 +86,10 @@ impl Targets {
     pub fn backends(&self) -> Vec<Backend> {
         match self {
             Self::Endpoints(backends) => backends.clone(),
-            Self::External { host, port } => vec![Backend {
-                address: BackendAddress::Tcp {
-                    host: host.clone(),
-                    port: *port,
-                },
-                weight: 1,
-                backup: false,
-            }],
+            Self::External { host, port } => vec![Backend::new(BackendAddress::Tcp {
+                host: host.clone(),
+                port: *port,
+            })],
         }
     }
 }
@@ -264,8 +260,9 @@ pub fn endpoints(
     service_port: &ServicePort,
 ) -> Vec<Backend> {
     let wanted = service_port.name.as_deref().unwrap_or_default();
-    // address → ready (true wins over a serving-and-terminating sighting in another slice).
-    let mut seen: BTreeMap<String, bool> = BTreeMap::new();
+    // address → ready (true wins over a serving-and-terminating sighting in another slice),
+    // with the endpoint's zone and topology hints (`hints.forZones`).
+    let mut seen: BTreeMap<String, Sighting> = BTreeMap::new();
     for slice in inventory.endpoint_slices_of(namespace, service) {
         let Some(port) = slice
             .ports
@@ -292,28 +289,69 @@ pub fn endpoints(
                 None
             };
             let Some(ready) = usable else { continue };
+            let sighting = Sighting {
+                ready,
+                zone: endpoint.zone.clone().filter(|z| !z.is_empty()),
+                for_zones: endpoint
+                    .hints
+                    .as_ref()
+                    .and_then(|h| h.for_zones.as_ref())
+                    .map(|zones| {
+                        zones
+                            .iter()
+                            .map(|z| z.name.clone())
+                            .filter(|z| !z.is_empty())
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            };
             for address in endpoint.addresses.iter().filter(|a| !refused_address(a)) {
                 let address = if ipv6 || address.contains(':') {
                     format!("[{}]:{port}", address.trim_matches(['[', ']']))
                 } else {
                     format!("{address}:{port}")
                 };
-                let entry = seen.entry(address).or_insert(ready);
-                *entry |= ready;
+                match seen.get_mut(&address) {
+                    // A ready sighting replaces a terminating one, zone and hints included.
+                    Some(entry) if ready && !entry.ready => *entry = sighting.clone(),
+                    Some(_) => {}
+                    None => {
+                        seen.insert(address, sighting.clone());
+                    }
+                }
             }
         }
     }
-    let any_ready = seen.values().any(|ready| *ready);
+    let any_ready = seen.values().any(|s| s.ready);
+    // Some endpoints with hints and some without: Kubernetes is moving to or from Topology
+    // Aware Routing, and kube-proxy then uses every endpoint ("Safeguards", Topology Aware
+    // Routing, kubernetes.io, checked 2026-11-13). Zones are dropped too, so nothing filters.
+    let with_hints = seen.values().filter(|s| !s.for_zones.is_empty()).count();
+    if with_hints > 0 && with_hints < seen.len() {
+        for sighting in seen.values_mut() {
+            sighting.zone = None;
+            sighting.for_zones.clear();
+        }
+    }
     seen.into_iter()
-        .filter_map(|(address, ready)| {
+        .filter_map(|(address, sighting)| {
             let address = address.parse::<BackendAddress>().ok()?;
             Some(Backend {
-                address,
-                weight: 1,
-                backup: any_ready && !ready,
+                backup: any_ready && !sighting.ready,
+                zone: sighting.zone,
+                for_zones: sighting.for_zones,
+                ..Backend::new(address)
             })
         })
         .collect()
+}
+
+/// One endpoint address as an EndpointSlice reports it.
+#[derive(Debug, Clone)]
+struct Sighting {
+    ready: bool,
+    zone: Option<String>,
+    for_zones: Vec<String>,
 }
 
 /// Whether an EndpointSlice address must never be dialled: loopback (`127.0.0.0/8`, `::1`),
@@ -458,6 +496,10 @@ fn base() -> Service {
         pass_host_header: true,
         max_requests: None,
         max_connections_per_backend: None,
+        failover: rdock_model::service::Failover::Strict,
+        overprovisioning: None,
+        locality: None,
+        hedge: None,
     }
 }
 
@@ -557,6 +599,91 @@ mod tests {
             .iter()
             .map(|b| (b.address.to_string(), b.backup))
             .collect()
+    }
+
+    #[test]
+    fn zones_and_topology_hints_are_kept() {
+        use k8s_openapi::api::discovery::v1::{EndpointHints, ForZone};
+        let zoned = |address: &str, zone: &str, hints: &[&str], ready: bool| Endpoint {
+            zone: Some(zone.to_owned()),
+            hints: (!hints.is_empty()).then(|| EndpointHints {
+                for_zones: Some(
+                    hints
+                        .iter()
+                        .map(|z| ForZone {
+                            name: (*z).to_owned(),
+                        })
+                        .collect(),
+                ),
+                ..EndpointHints::default()
+            }),
+            ..endpoint(address, Some(ready), true, !ready)
+        };
+        let inv = inventory(
+            service(&[(Some("http"), 80)], None),
+            vec![
+                slice(
+                    "a",
+                    "IPv4",
+                    &[(Some("http"), 8080)],
+                    vec![
+                        zoned("10.0.0.1", "eu-1a", &["eu-1a"], true),
+                        zoned("10.0.0.2", "eu-1b", &["eu-1c", "eu-1b"], true),
+                        zoned("10.0.0.3", "eu-1c", &["eu-1c"], true),
+                        // Terminating here, ready (with other hints) in the next slice.
+                        zoned("10.0.0.4", "eu-1a", &["eu-1a"], false),
+                    ],
+                ),
+                slice(
+                    "b",
+                    "IPv4",
+                    &[(Some("http"), 8080)],
+                    vec![zoned("10.0.0.4", "eu-1a", &["eu-1b"], true)],
+                ),
+            ],
+        );
+        let resolved = resolve(&inv, "ns", "svc", None, false).unwrap();
+        let backends: Vec<(String, Option<String>, Vec<String>)> = resolved
+            .targets
+            .backends()
+            .into_iter()
+            .map(|b| (b.address.to_string(), b.zone, b.for_zones))
+            .collect();
+        let s = |v: &str| v.to_owned();
+        assert_eq!(
+            backends,
+            vec![
+                (s("10.0.0.1:8080"), Some(s("eu-1a")), vec![s("eu-1a")]),
+                (
+                    s("10.0.0.2:8080"),
+                    Some(s("eu-1b")),
+                    vec![s("eu-1c"), s("eu-1b")]
+                ),
+                (s("10.0.0.3:8080"), Some(s("eu-1c")), vec![s("eu-1c")]),
+                (s("10.0.0.4:8080"), Some(s("eu-1a")), vec![s("eu-1b")]),
+            ]
+        );
+        // One endpoint without a hint: a transition; nothing is filtered by zone.
+        let inv = inventory(
+            service(&[(Some("http"), 80)], None),
+            vec![slice(
+                "a",
+                "IPv4",
+                &[(Some("http"), 8080)],
+                vec![
+                    zoned("10.0.0.1", "eu-1a", &["eu-1a"], true),
+                    zoned("10.0.0.2", "eu-1b", &[], true),
+                ],
+            )],
+        );
+        let resolved = resolve(&inv, "ns", "svc", None, false).unwrap();
+        assert!(
+            resolved
+                .targets
+                .backends()
+                .iter()
+                .all(|b| b.zone.is_none() && b.for_zones.is_empty())
+        );
     }
 
     #[test]

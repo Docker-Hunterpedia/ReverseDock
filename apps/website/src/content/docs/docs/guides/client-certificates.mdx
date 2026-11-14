@@ -24,7 +24,7 @@ listeners:
 - **`required`**: a handshake without a valid certificate fails; no request is read.
 - **`optional`**: clients without a certificate are let in, and routes decide with the [`client_cert`](#check-a-certificate-per-route) middleware. A certificate that is sent is still verified.
 - `ca_files` lists PEM files with the CAs that sign your client certificates. Certificates are always verified against them: modes that accept unverified certificates, such as Traefik's `RequireAnyClientCert`, are not offered, because a backend could then be fooled by any self-made certificate.
-- The CA files are read on every reload; a missing or empty file refuses the configuration.
+- The CA files are read on every reload; a missing or empty file refuses the configuration. They are also watched <Status planned="v0.9" />: a CA bundle rewritten on disk (by spiffe-helper, csi-driver-spiffe or your own rotation) is picked up without a restart.
 
 ## Check a certificate per route
 
@@ -43,6 +43,103 @@ middlewares:
 ```
 
 `allow` matches the certificate's common name and its DNS, URI and email names; `*` stands for any run of characters. Without `allow`, any certificate from the listener's CAs is accepted.
+
+## Check one field at a time
+
+`allow` mixes every name, so ``"*.example.com"`` is also satisfied by a URI SAN or a common name
+that ends the same way. Typed lists <Status planned="v0.9" /> check one field each; every list
+that is set must match (and `allow`, if set), and within a list one entry is enough:
+
+| Setting | Field | Matching |
+|---|---|---|
+| `subjects` | subject common name | `*` globs, case-insensitive |
+| `organizations` | subject organization (O) | `*` globs, case-insensitive |
+| `dns` | DNS SANs | `*` globs, case-insensitive |
+| `uris` | URI SANs | `*` globs, **case-sensitive** |
+| `emails` | email SANs | `*` globs, case-insensitive |
+| `serials` | serial number in hex (colons allowed) | exact |
+| `sha256` | SHA-256 of the certificate in hex (colons allowed): a pin | exact |
+
+```yaml title="rdock.yaml (excerpt)"
+middlewares:
+  billing-clients:
+    type: client_cert
+    organizations: [Example Corp]
+    dns: ["*.billing.example.com"]
+```
+
+## SPIFFE workload identities
+
+`spiffe` <Status planned="v0.9" /> accepts only valid
+[X.509-SVIDs](https://github.com/spiffe/spiffe/blob/main/standards/X509-SVID.md) of the trust
+domains you list, and only the SPIFFE IDs you name:
+
+```yaml title="rdock.yaml"
+listeners:
+  mesh:
+    address: ":8443"
+    tls:
+      client_auth: { mode: required, ca_files: [/etc/rdock/certs/prod-bundle.pem] }
+certificates:
+  site: { cert_file: /etc/rdock/certs/site.pem, key_file: /etc/rdock/certs/site.key }
+routes:
+  api:
+    match: "Host(`example.com`)"
+    listeners: [mesh]
+    service: api
+    middlewares: [workloads]
+middlewares:
+  workloads:
+    type: client_cert
+    spiffe:
+      trust_domains: [prod.example.com]
+      ids: ["spiffe://prod.example.com/ns/web/sa/frontend"]
+      id_prefixes: ["spiffe://prod.example.com/ns/jobs"]
+      consumer: true
+    forward: xfcc
+services:
+  api:
+    backends: [{ address: "127.0.0.1:3000" }]
+```
+
+A certificate passes when, following the SPIFFE standards `X509-SVID.md` and `SPIFFE-ID.md`
+(commit `5d15e3ee` of [spiffe/spiffe](https://github.com/spiffe/spiffe), checked 2026-11-13):
+
+- it has **exactly one** URI SAN, with the scheme `spiffe`;
+- the trust domain is non-empty, lower case `[a-z0-9._-]`, without port or user info, and one
+  of `trust_domains`;
+- the path is not empty (a leaf never carries a trust domain's own ID), with no empty, `.` or
+  `..` segment, no trailing `/` and only `[a-zA-Z0-9._-]`; no query or fragment; at most 2048
+  bytes;
+- it is not a CA and may not sign certificates or CRLs;
+- its ID is one of `ids` or lies under one of `id_prefixes`, segment by segment
+  (`spiffe://prod.example.com/ns/jobs` accepts `/ns/jobs` and `/ns/jobs/sa/cron`, never
+  `/ns/jobsx`). With neither list, any ID of the trust domains passes.
+
+The chain is verified by the listener's `client_auth`, so its `ca_files` must be the trust
+domain's bundle. One listener holds one CA pool: list one trust domain per listener; federation
+with per-trust-domain bundles is planned.
+
+The accepted SPIFFE ID is in the access log (`spiffe_id`) and in `X-Forwarded-Client-Cert`
+(`URI=`). With `consumer: true` (off by default) it also becomes the request's **consumer**, so
+`rate_limit` and `quota` with `key: consumer`, metering and the access log's `consumer` count
+per workload. Its issuer is `spiffe://<trust domain>`, so it never shares counters with an API
+key consumer or an OIDC user of the same name.
+
+### Rotation
+
+SVIDs live about an hour. Write them as files with
+[spiffe-helper](https://github.com/spiffe/spiffe-helper) (daemon mode) or cert-manager's
+[csi-driver-spiffe](https://cert-manager.io/docs/usage/csi-driver-spiffe/); rdock watches the
+listener's `ca_files` and the services' `tls.ca_file`, `tls.cert_file` and `tls.key_file` and
+reloads when they change. A certificate and key written as two files are briefly a mismatched
+pair: that reload is refused (`the key … does not belong to the certificate …`), the running pair
+stays in use, and the reload after the second file lands applies the new pair. New connections
+to backends use the new certificate; pooled ones made with the previous one are not reused.
+
+The SPIFFE Workload API (a gRPC socket) is planned: it needs a gRPC client in the data plane.
+Checking a **backend's** SPIFFE ID is planned too: Pingora 0.9.1's upstream verifier checks the
+chain and the host name, and offers no hook for a URI SAN check.
 
 ## Pass the identity to the backend
 
@@ -87,7 +184,7 @@ services:
       key_file: /etc/rdock/rdock-client.key
 ```
 
-`cert_file` holds the certificate and any intermediates, leaf first; `key_file` the PEM key (PKCS#8, PKCS#1 or SEC1). Both are checked when the configuration loads. `ca_file` can name a different CA from the one that signs the client certificate.
+`cert_file` holds the certificate and any intermediates, leaf first; `key_file` the PEM key (PKCS#8, PKCS#1 or SEC1). Both are checked when the configuration loads, including that the key belongs to the certificate <Status planned="v0.9" />, and read again when they change. `ca_file` can name a different CA from the one that signs the client certificate.
 
 ## Related
 

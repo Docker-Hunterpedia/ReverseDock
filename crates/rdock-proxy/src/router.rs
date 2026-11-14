@@ -26,6 +26,8 @@ pub struct Facts<'a> {
     pub query: &'a [(String, String)],
     /// Resolved client IP.
     pub client_ip: IpAddr,
+    /// The connection's TLS client fingerprints, if its listener computes them.
+    pub fingerprint: Option<&'a rdock_middleware::ClientFingerprint>,
 }
 
 /// A compiled rule.
@@ -70,6 +72,107 @@ pub enum Compiled {
     QueryRegexp(String, Regex),
     /// `ClientIP(..)`.
     ClientIp(IpNet),
+    /// `ClientFingerprint(..)`: JA4 or JA3 values.
+    Fingerprint(Vec<String>),
+    /// `ClientCountry`, `ClientContinent`, `ClientASN`.
+    Geo(GeoMatcher),
+}
+
+/// A compiled GeoIP matcher with the databases it looks up in.
+#[derive(Debug, Clone)]
+pub struct GeoMatcher {
+    geo: std::sync::Arc<crate::geoip::GeoIp>,
+    test: GeoTest,
+}
+
+#[derive(Debug, Clone)]
+enum GeoTest {
+    Country(Vec<[u8; 2]>),
+    Continent(Vec<[u8; 2]>),
+    Asn(Vec<u32>),
+}
+
+impl GeoMatcher {
+    /// Compiles a GeoIP matcher; `None` for any other matcher.
+    ///
+    /// # Errors
+    ///
+    /// No database is configured, or a value is malformed (validation reports both first).
+    pub fn compile(
+        m: &Matcher,
+        geo: Option<&std::sync::Arc<crate::geoip::GeoIp>>,
+    ) -> Result<Option<Self>, RuleCompileError> {
+        let codes = |list: &[String]| -> Result<Vec<[u8; 2]>, RuleCompileError> {
+            list.iter()
+                .map(|c| match c.as_bytes() {
+                    [a, b] => Ok([a.to_ascii_uppercase(), b.to_ascii_uppercase()]),
+                    _ => Err(RuleCompileError(format!("`{c}` is not a two-letter code"))),
+                })
+                .collect()
+        };
+        let test = match m {
+            Matcher::ClientCountry(list) => GeoTest::Country(codes(list)?),
+            Matcher::ClientContinent(list) => GeoTest::Continent(codes(list)?),
+            Matcher::ClientAsn(list) => GeoTest::Asn(
+                list.iter()
+                    .map(|n| {
+                        n.parse()
+                            .map_err(|_| RuleCompileError(format!("`{n}` is not an ASN")))
+                    })
+                    .collect::<Result<_, _>>()?,
+            ),
+            _ => return Ok(None),
+        };
+        let Some(geo) = geo else {
+            return Err(RuleCompileError(format!(
+                "`{}` needs a GeoIP database: set `geoip.database`{}",
+                m.name(),
+                if matches!(m, Matcher::ClientAsn(_)) {
+                    " or `geoip.asn_database`"
+                } else {
+                    ""
+                }
+            )));
+        };
+        Ok(Some(Self {
+            geo: geo.clone(),
+            test,
+        }))
+    }
+
+    /// Whether `ip` is in one of the countries, continents or networks. An address that is
+    /// not global or not in the database never matches.
+    #[must_use]
+    pub fn matches(&self, ip: IpAddr) -> bool {
+        let record = self.geo.lookup(ip);
+        match &self.test {
+            GeoTest::Country(codes) => record.country.is_some_and(|c| codes.contains(&c)),
+            GeoTest::Continent(codes) => record.continent.is_some_and(|c| codes.contains(&c)),
+            GeoTest::Asn(numbers) => record.asn.is_some_and(|n| numbers.contains(&n)),
+        }
+    }
+
+    fn describe(&self) -> String {
+        match &self.test {
+            GeoTest::Country(c) => format!("ClientCountry({})", list_codes(c)),
+            GeoTest::Continent(c) => format!("ClientContinent({})", list_codes(c)),
+            GeoTest::Asn(n) => format!(
+                "ClientASN({})",
+                n.iter()
+                    .map(|n| format!("`{n}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
+    }
+}
+
+fn list_codes(codes: &[[u8; 2]]) -> String {
+    codes
+        .iter()
+        .map(|c| format!("`{}`", String::from_utf8_lossy(c)))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// A matcher that cannot be compiled; validation reports these before compilation.
@@ -78,17 +181,27 @@ pub enum Compiled {
 pub struct RuleCompileError(pub String);
 
 impl Rule {
-    /// Compiles a parsed HTTP rule.
+    /// Compiles a parsed HTTP rule without GeoIP databases.
     pub fn compile(expr: &Expr) -> Result<Self, RuleCompileError> {
+        Self::compile_with(expr, None)
+    }
+
+    /// Compiles a parsed HTTP rule; GeoIP matchers look up in `geo`.
+    pub fn compile_with(
+        expr: &Expr,
+        geo: Option<&std::sync::Arc<crate::geoip::GeoIp>>,
+    ) -> Result<Self, RuleCompileError> {
+        let each = |items: &[Expr]| {
+            items
+                .iter()
+                .map(|e| Self::compile_with(e, geo))
+                .collect::<Result<Vec<_>, _>>()
+        };
         Ok(match expr {
-            Expr::Matcher(m) => Self::Match(Box::new(compile_matcher(m)?)),
-            Expr::Not(inner) => Self::Not(Box::new(Self::compile(inner)?)),
-            Expr::And(items) => {
-                Self::All(items.iter().map(Self::compile).collect::<Result<_, _>>()?)
-            }
-            Expr::Or(items) => {
-                Self::Any(items.iter().map(Self::compile).collect::<Result<_, _>>()?)
-            }
+            Expr::Matcher(m) => Self::Match(Box::new(compile_matcher(m, geo)?)),
+            Expr::Not(inner) => Self::Not(Box::new(Self::compile_with(inner, geo)?)),
+            Expr::And(items) => Self::All(each(items)?),
+            Expr::Or(items) => Self::Any(each(items)?),
         })
     }
 
@@ -121,6 +234,14 @@ impl Rule {
     }
 }
 
+/// Whether the connection's JA4 or JA3 is one of `values`.
+pub(crate) fn fingerprint_in(fp: &rdock_middleware::ClientFingerprint, values: &[String]) -> bool {
+    [fp.ja4.as_deref(), fp.ja3.as_deref()]
+        .into_iter()
+        .flatten()
+        .any(|v| values.iter().any(|w| w == v))
+}
+
 pub(crate) fn regex(pattern: &str) -> Result<Regex, RuleCompileError> {
     RegexBuilder::new(pattern)
         .size_limit(REGEX_SIZE_LIMIT)
@@ -143,7 +264,13 @@ pub fn normalize_host(host: &str) -> String {
     host.to_ascii_lowercase()
 }
 
-fn compile_matcher(m: &Matcher) -> Result<Compiled, RuleCompileError> {
+fn compile_matcher(
+    m: &Matcher,
+    geo: Option<&std::sync::Arc<crate::geoip::GeoIp>>,
+) -> Result<Compiled, RuleCompileError> {
+    if let Some(geo) = GeoMatcher::compile(m, geo)? {
+        return Ok(Compiled::Geo(geo));
+    }
     Ok(match m {
         Matcher::Host(host) if host == "*" => Compiled::AnyHost,
         Matcher::Host(host) => match host.strip_prefix("*.") {
@@ -168,8 +295,12 @@ fn compile_matcher(m: &Matcher) -> Result<Compiled, RuleCompileError> {
                 .or_else(|_| ip.parse::<IpAddr>().map(IpNet::from))
                 .map_err(|e| RuleCompileError(e.to_string()))?,
         ),
+        Matcher::ClientFingerprint(values) => Compiled::Fingerprint(values.clone()),
         Matcher::HostSni(_) | Matcher::HostSniRegexp(_) | Matcher::Alpn(_) => {
             return Err(RuleCompileError(format!("`{}` is a TCP matcher", m.name())));
+        }
+        Matcher::ClientCountry(_) | Matcher::ClientContinent(_) | Matcher::ClientAsn(_) => {
+            return Err(RuleCompileError(format!("`{}` needs GeoIP", m.name())));
         }
     })
 }
@@ -210,6 +341,18 @@ impl Compiled {
                 format!("QueryRegexp(`{key}`, `{re}`): no matching value")
             }
             Self::ClientIp(net) => format!("ClientIP(`{net}`): the client is `{}`", f.client_ip),
+            Self::Fingerprint(values) => format!(
+                "ClientFingerprint(`{}`): the connection's JA4 is {}",
+                values.join("`, `"),
+                f.fingerprint
+                    .and_then(|fp| fp.ja4.as_deref())
+                    .map_or_else(|| "absent".to_owned(), |v| format!("`{v}`"))
+            ),
+            Self::Geo(geo) => format!(
+                "{}: the client `{}` is not in it",
+                geo.describe(),
+                f.client_ip
+            ),
         }
     }
 
@@ -238,8 +381,162 @@ impl Compiled {
                 .any(|v| v.to_str().is_ok_and(|v| re.is_match(v))),
             Self::Query(key, value) => f.query.iter().any(|(k, v)| k == key && v == value),
             Self::QueryRegexp(key, re) => f.query.iter().any(|(k, v)| k == key && re.is_match(v)),
+            Self::Fingerprint(values) => f.fingerprint.is_some_and(|fp| fingerprint_in(fp, values)),
+            Self::Geo(geo) => geo.matches(f.client_ip),
             Self::ClientIp(net) => net.contains(&f.client_ip),
         }
+    }
+}
+
+/// The hosts a compiled rule can match, as the route index sees them: a sound
+/// over-approximation, so a rule outside a request's candidates can never match it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HostKeys {
+    /// The index cannot tell: no host condition, `HostRegexp`, a negation, `Host(*)`…
+    Any,
+    /// Only these exact hosts and one-label wildcards (suffixes such as `.example.com`).
+    Some {
+        exact: Vec<String>,
+        wildcards: Vec<String>,
+    },
+}
+
+impl HostKeys {
+    fn of(rule: &Rule) -> Self {
+        match rule {
+            Rule::Match(m) => match m.as_ref() {
+                Compiled::Host(host) => Self::Some {
+                    exact: vec![host.clone()],
+                    wildcards: Vec::new(),
+                },
+                Compiled::HostWildcard(suffix) => Self::Some {
+                    exact: Vec::new(),
+                    wildcards: vec![suffix.clone()],
+                },
+                _ => Self::Any,
+            },
+            Rule::Not(_) => Self::Any,
+            // Every item must match, so any constrained item bounds the whole; keep the
+            // smallest.
+            Rule::All(items) => {
+                items
+                    .iter()
+                    .map(Self::of)
+                    .fold(Self::Any, |acc, next| match (acc, next) {
+                        (Self::Any, other) | (other, Self::Any) => other,
+                        (a, b) => {
+                            if a.len() <= b.len() {
+                                a
+                            } else {
+                                b
+                            }
+                        }
+                    })
+            }
+            // One item must match: the union, unless an item is unconstrained.
+            Rule::Any(items) => {
+                let mut exact = Vec::new();
+                let mut wildcards = Vec::new();
+                for item in items {
+                    match Self::of(item) {
+                        Self::Any => return Self::Any,
+                        Self::Some {
+                            exact: e,
+                            wildcards: w,
+                        } => {
+                            exact.extend(e);
+                            wildcards.extend(w);
+                        }
+                    }
+                }
+                Self::Some { exact, wildcards }
+            }
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Any => usize::MAX,
+            Self::Some { exact, wildcards } => exact.len() + wildcards.len(),
+        }
+    }
+}
+
+/// The routes of a listener by host, so a request is checked only against the routes that can
+/// match its host (exact `Host` names, one-label `Host(*.…)` wildcards) and the routes the
+/// index cannot decide (no host condition, `HostRegexp`, negations, `Host(*)`, an `||` with an
+/// unconstrained side). Candidates come out in the listener's evaluation order, so the first
+/// candidate that matches is the route a scan of every route would find.
+#[derive(Debug, Default, Clone)]
+pub struct RouteIndex {
+    exact: std::collections::HashMap<Box<str>, Vec<usize>>,
+    wildcards: std::collections::HashMap<Box<str>, Vec<usize>>,
+    rest: Vec<usize>,
+}
+
+impl RouteIndex {
+    /// Indexes rules given in evaluation order.
+    #[must_use]
+    pub fn build<'a>(rules: impl IntoIterator<Item = &'a Rule>) -> Self {
+        let mut index = Self::default();
+        for (position, rule) in rules.into_iter().enumerate() {
+            match HostKeys::of(rule) {
+                HostKeys::Any => index.rest.push(position),
+                HostKeys::Some { exact, wildcards } => {
+                    for host in exact {
+                        push_unique(index.exact.entry(host.into()).or_default(), position);
+                    }
+                    for suffix in wildcards {
+                        push_unique(index.wildcards.entry(suffix.into()).or_default(), position);
+                    }
+                }
+            }
+        }
+        index
+    }
+
+    /// Positions of the rules that can match `host`, ascending. `host` is compared as the
+    /// rules compare it (the normalised request host).
+    pub fn candidates<'a>(&'a self, host: &str) -> impl Iterator<Item = usize> + 'a {
+        let exact = self.exact.get(host).map_or(&[][..], Vec::as_slice);
+        // `Host(*.example.com)` matches `<label>.example.com` with a non-empty label without
+        // dots, so its suffix starts at the host's first dot.
+        let wildcard = host
+            .find('.')
+            .filter(|&dot| dot > 0)
+            .and_then(|dot| self.wildcards.get(&host[dot..]))
+            .map_or(&[][..], Vec::as_slice);
+        Merge {
+            lists: [exact, wildcard, &self.rest],
+        }
+    }
+}
+
+/// Adds `position` unless it is already the last entry (a rule naming one host twice).
+fn push_unique(list: &mut Vec<usize>, position: usize) {
+    if list.last() != Some(&position) {
+        list.push(position);
+    }
+}
+
+/// Merges three ascending lists into one ascending sequence without allocating.
+struct Merge<'a> {
+    lists: [&'a [usize]; 3],
+}
+
+impl Iterator for Merge<'_> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<usize> {
+        let value = self.lists.iter().filter_map(|l| l.first().copied()).min()?;
+        // A position in two lists (an exact host and a wildcard of the same rule) comes out
+        // once.
+        for list in &mut self.lists {
+            if let Some(rest) = list.strip_prefix(&[value]) {
+                *list = rest;
+            }
+        }
+        Some(value)
     }
 }
 
@@ -347,6 +644,7 @@ mod tests {
                 headers: &self.headers,
                 query: &self.query,
                 client_ip: self.ip,
+                fingerprint: None,
             }
         }
     }
@@ -400,6 +698,160 @@ mod tests {
         assert!(rule("ClientIP(`192.0.2.0/24`)").matches(&f));
         assert!(rule("ClientIP(`192.0.2.1`)").matches(&f));
         assert!(rule("!ClientIP(`10.0.0.0/8`) && (Method(`GET`) || Method(`POST`))").matches(&f));
+    }
+
+    /// A small deterministic generator (xorshift64*), so the differential test needs no
+    /// extra dependency and every failure is reproducible from its seed.
+    struct Gen(u64);
+
+    impl Gen {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        }
+
+        fn pick<'a>(&mut self, items: &[&'a str]) -> &'a str {
+            items[usize::try_from(self.next() % items.len() as u64).unwrap()]
+        }
+
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+    }
+
+    const HOSTS: [&str; 12] = [
+        "a.test",
+        "b.test",
+        "A.Test",
+        "x.a.test",
+        "y.a.test",
+        "a.b.a.test",
+        "test",
+        "b.test.",
+        "[::1]",
+        "127.0.0.1",
+        "c.example.com",
+        "",
+    ];
+
+    fn matcher(g: &mut Gen) -> String {
+        match g.below(12) {
+            0..=3 => format!("Host(`{}`)", g.pick(&HOSTS[..10])),
+            4 | 5 => format!(
+                "Host(`*.{}`)",
+                g.pick(&["a.test", "test", "example.com", "b.a.test", "A.TEST"])
+            ),
+            6 => "Host(`*`)".to_owned(),
+            7 => format!("HostRegexp(`{}`)", g.pick(&["^a", "test$", "^x\\.", "."])),
+            8 => format!("PathPrefix(`{}`)", g.pick(&["/", "/api", "/a"])),
+            9 => format!("Path(`{}`)", g.pick(&["/", "/api/v1"])),
+            10 => format!("Method(`{}`)", g.pick(&["GET", "POST"])),
+            _ => format!("Header(`x-env`, `{}`)", g.pick(&["prod", "test"])),
+        }
+    }
+
+    fn expression(g: &mut Gen, depth: u32) -> String {
+        if depth == 0 {
+            return matcher(g);
+        }
+        match g.below(6) {
+            0 | 1 => matcher(g),
+            2 => format!("!({})", expression(g, depth - 1)),
+            3 | 4 => format!(
+                "({} && {})",
+                expression(g, depth - 1),
+                expression(g, depth - 1)
+            ),
+            _ => format!(
+                "({} || {})",
+                expression(g, depth - 1),
+                expression(g, depth - 1)
+            ),
+        }
+    }
+
+    /// The index finds exactly the route a scan of every route finds, for random rule sets and
+    /// requests, including hosts the proxy would have normalised first.
+    #[test]
+    fn route_index_matches_the_linear_scan() {
+        let request_hosts = [
+            "a.test",
+            "b.test",
+            "x.a.test",
+            "y.a.test",
+            "a.b.a.test",
+            "q.b.a.test",
+            "test",
+            "z.test",
+            "::1",
+            "127.0.0.1",
+            "c.example.com",
+            "example.com",
+            ".a.test",
+            "A.TEST",
+            "",
+            "b.test.",
+        ];
+        let mut g = Gen(0x9E37_79B9_7F4A_7C15);
+        let (mut checked, mut matched) = (0, 0);
+        for _ in 0..400 {
+            let count = 1 + g.below(40);
+            let rules: Vec<Rule> = (0..count)
+                .map(|_| {
+                    let depth = u32::try_from(g.below(4)).unwrap();
+                    rule(&expression(&mut g, depth))
+                })
+                .collect();
+            let index = RouteIndex::build(&rules);
+            for host in request_hosts {
+                for path in ["/", "/api/v1", "/a/b"] {
+                    for method in ["GET", "POST"] {
+                        let mut req = Req::new(host, path);
+                        req.method = method;
+                        if g.below(2) == 0 {
+                            req.headers.append("x-env", "prod".parse().unwrap());
+                        }
+                        let facts = req.facts();
+                        let scanned = rules.iter().position(|r| r.matches(&facts));
+                        let indexed = index.candidates(host).find(|&i| rules[i].matches(&facts));
+                        assert_eq!(
+                            indexed, scanned,
+                            "host {host:?} path {path} rules {rules:?}"
+                        );
+                        checked += 1;
+                        matched += usize::from(scanned.is_some_and(|i| i > 0));
+                    }
+                }
+            }
+        }
+        assert!(checked > 10_000);
+        assert!(
+            matched > checked / 10,
+            "{matched} of {checked} matched past the first rule"
+        );
+    }
+
+    #[test]
+    fn route_index_skips_routes_of_other_hosts() {
+        let rules: Vec<Rule> = [
+            "Host(`a.test`)",
+            "Host(`*.a.test`) && PathPrefix(`/x`)",
+            "PathPrefix(`/`)",
+            "Host(`b.test`) || Host(`*.b.test`)",
+            "Host(`a.test`) && Method(`POST`)",
+            "!Host(`c.test`)",
+        ]
+        .iter()
+        .map(|r| rule(r))
+        .collect();
+        let index = RouteIndex::build(&rules);
+        assert_eq!(index.candidates("a.test").collect::<Vec<_>>(), [0, 2, 4, 5]);
+        assert_eq!(index.candidates("q.a.test").collect::<Vec<_>>(), [1, 2, 5]);
+        assert_eq!(index.candidates("x.b.test").collect::<Vec<_>>(), [2, 3, 5]);
+        assert_eq!(index.candidates("b.test").collect::<Vec<_>>(), [2, 3, 5]);
+        assert_eq!(index.candidates("other").collect::<Vec<_>>(), [2, 5]);
     }
 
     #[test]

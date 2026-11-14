@@ -6,7 +6,7 @@ import { join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { startLab } from "./rdock.ts";
 
-const PAGES = ["/", "/routes", "/services", "/middlewares", "/certificates", "/listeners", "/providers", "/security", "/logs", "/traffic", "/config", "/settings"];
+const PAGES = ["/", "/routes", "/services", "/middlewares", "/certificates", "/listeners", "/providers", "/security", "/cluster", "/logs", "/traffic", "/config", "/settings"];
 const WIDTHS = [400, 768, 1024, 1440];
 const SHOTS = join(import.meta.dirname, "screenshots");
 mkdirSync(SHOTS, { recursive: true });

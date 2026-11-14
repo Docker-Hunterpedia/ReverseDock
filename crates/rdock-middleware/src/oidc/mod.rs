@@ -470,17 +470,24 @@ impl Oidc {
             .map_to_consumers
             .then(|| self.consumers.consumer(&session.consumer))
             .flatten();
+        // Groups from the identity provider's claims never count for group keys; with
+        // `map_to_consumers`, the configured consumer's groups come first and do.
+        let mut trusted_groups = 0;
         if let Some(defined) = defined {
-            for group in defined.groups.iter() {
-                if !groups.contains(group) {
-                    groups.push(group.clone());
+            let mut ordered: Vec<Arc<str>> = defined.groups.to_vec();
+            trusted_groups = ordered.len();
+            for group in groups {
+                if !ordered.contains(&group) {
+                    ordered.push(group);
                 }
             }
+            groups = ordered;
         }
         cx.user = Some(session.consumer.clone());
         cx.consumer = Some(crate::Consumer {
             name: Arc::from(session.consumer.as_str()),
             groups: Arc::from(groups),
+            trusted_groups,
             issuer: defined.is_none().then(|| self.issuer.clone()),
         });
         self.strip_cookies(req);

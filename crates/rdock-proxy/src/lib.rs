@@ -9,7 +9,9 @@ mod errorpage;
 pub mod explain;
 pub mod forwarded;
 pub mod gate;
+pub mod geoip;
 mod health;
+pub mod http3;
 pub mod listener;
 mod proxy;
 pub mod proxy_protocol;
@@ -24,4 +26,6 @@ pub mod upstream;
 pub use compile::{CompileEnv, Compiled, compile};
 pub use gate::Mode;
 pub use runtime::Runtime;
-pub use server::{ApplyError, DataPlane, ListenerStatus, random_key};
+pub use server::{
+    ApplyError, DataPlane, InheritedSocket, ListenerHandle, ListenerStatus, random_key,
+};

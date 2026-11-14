@@ -37,6 +37,7 @@ pub struct ClientAuth {
     pub required: bool,
     roots: Arc<RootCertStore>,
     fingerprint: u64,
+    identity: [u8; 32],
 }
 
 impl std::fmt::Debug for ClientAuth {
@@ -59,6 +60,7 @@ impl ClientAuth {
     pub fn new(required: bool, bundles: &[(String, String)]) -> Result<Self, ClientAuthError> {
         let mut roots = RootCertStore::empty();
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let mut digests = Vec::new();
         for (name, pem) in bundles {
             let certs: Vec<CertificateDer<'static>> =
                 CertificateDer::pem_slice_iter(pem.as_bytes())
@@ -71,16 +73,36 @@ impl ClientAuth {
             }
             for cert in certs {
                 cert.as_ref().hash(&mut hasher);
+                digests.push(ring::digest::digest(&ring::digest::SHA256, cert.as_ref()));
                 roots
                     .add(cert)
                     .map_err(|e| ClientAuthError::Roots(format!("`{name}`: {e}")))?;
             }
         }
+        // The set of anchors, whatever the order of files and certificates.
+        let mut sorted: Vec<&[u8]> = digests.iter().map(AsRef::as_ref).collect();
+        sorted.sort_unstable();
+        sorted.dedup();
+        let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+        for digest in sorted {
+            context.update(digest);
+        }
+        let mut identity = [0; 32];
+        identity.copy_from_slice(context.finish().as_ref());
         Ok(Self {
             required,
             roots: Arc::new(roots),
             fingerprint: hasher.finish(),
+            identity,
         })
+    }
+
+    /// SHA-256 over the trust anchors' SHA-256 digests in sorted order: the same for the same
+    /// set of CA certificates in every process, so it can name a resumption class
+    /// ([`crate::tickets::ClassKey`]).
+    #[must_use]
+    pub fn identity(&self) -> [u8; 32] {
+        self.identity
     }
 
     /// The rustls verifier for these settings.

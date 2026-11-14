@@ -226,14 +226,24 @@ fn host_port(host: &str) -> Option<u16> {
     after.trim_start_matches(':').parse().ok()
 }
 
+/// Whether `name` (lower case, as `HeaderName` stores it) is a managed header, also when
+/// spelled with underscores for dashes. Compared in place: this runs for every header of every
+/// request from an untrusted peer.
+fn is_managed(name: &str) -> bool {
+    MANAGED.iter().any(|managed| {
+        managed.len() == name.len()
+            && managed
+                .bytes()
+                .zip(name.bytes())
+                .all(|(m, n)| m == n || (m == b'-' && n == b'_'))
+    })
+}
+
 fn remove_managed(req: &mut RequestHeader) {
     let doomed: Vec<HeaderName> = req
         .headers
         .keys()
-        .filter(|name| {
-            let dashed = name.as_str().replace('_', "-");
-            MANAGED.contains(&dashed.as_str())
-        })
+        .filter(|name| is_managed(name.as_str()))
         .cloned()
         .collect();
     for name in doomed {
@@ -273,6 +283,33 @@ fn set_if_absent(req: &mut RequestHeader, name: &'static str, value: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn managed_names_compare_like_dashed_copies() {
+        let names = [
+            "x-forwarded-for",
+            "x_forwarded_for",
+            "x-forwarded_proto",
+            "x-forwarded-fo",
+            "x-forwarded-forx",
+            "forwarded",
+            "forwarde_",
+            "x-real-ip",
+            "x_real_ip",
+            "x-real-ipp",
+            "cf_connecting_ip",
+            "accept",
+            "",
+        ];
+        for name in names {
+            let dashed = name.replace('_', "-");
+            assert_eq!(
+                is_managed(name),
+                MANAGED.contains(&dashed.as_str()),
+                "{name}"
+            );
+        }
+    }
 
     fn net(s: &str) -> IpNet {
         s.parse().unwrap()

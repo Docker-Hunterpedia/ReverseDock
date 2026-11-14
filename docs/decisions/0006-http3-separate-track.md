@@ -1,6 +1,6 @@
 # ADR-0006: HTTP/3 is a separate, feature-gated track
 
-- Status: accepted · Date: 2026-10-26
+- Status: superseded by [ADR-0032](0032-http3-on-quinn-and-h3.md) · Date: 2026-10-26
 
 ## Context
 Pingora has no HTTP/3: PR #514 (quiche h3 server) and #524 (client) were closed unmerged in September 2026; maintainers point to `tokio-quiche`, which requires BoringSSL and "is not a standalone HTTP/3 server". A rustls build cannot host quiche; OpenSSL + BoringSSL cannot be linked together.

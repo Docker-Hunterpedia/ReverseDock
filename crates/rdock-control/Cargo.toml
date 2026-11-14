@@ -1,0 +1,42 @@
+[package]
+name = "rdock-control"
+description = "The control plane of a ReverseDock cluster: cluster CA, join tokens, instance registry, bundle history and store server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64.workspace = true
+bytes.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper = { workspace = true, features = ["server"] }
+hyper-util.workspace = true
+rcgen = { workspace = true, features = ["x509-parser"] }
+rdock-cluster.workspace = true
+rdock-credentials.workspace = true
+rdock-model.workspace = true
+rdock-observability.workspace = true
+ring.workspace = true
+rustls.workspace = true
+rustls-pki-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+tracing.workspace = true
+x509-parser.workspace = true
+zstd.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

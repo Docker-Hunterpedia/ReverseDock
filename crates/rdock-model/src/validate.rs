@@ -58,6 +58,11 @@ impl Config {
         };
         v.check_version();
         v.check_listeners();
+        v.check_sockets();
+        v.check_resumption();
+        v.check_http2();
+        v.check_http3();
+        v.check_upgrade();
         v.check_defaults();
         v.check_routes();
         v.check_services();
@@ -75,6 +80,10 @@ impl Config {
         v.check_admin();
         v.check_observability();
         v.check_providers();
+        v.check_locality();
+        v.check_edge();
+        v.check_cluster();
+        v.check_tenants();
         v.out
     }
 }
@@ -137,6 +146,15 @@ struct Validator<'a> {
     /// Other providers' objects are present as `name@provider` keys.
     merged: bool,
     out: Vec<Diagnostic>,
+}
+
+/// Whether `route` gets automatic certificates (the compiler's rule).
+pub(crate) fn wants_auto_tls(config: &Config, route: &Route) -> bool {
+    match &route.tls {
+        None => config.defaults.tls == TlsMode::Auto,
+        Some(RouteTls::Mode(mode)) => *mode == TlsMode::Auto,
+        Some(RouteTls::Options(o)) => o.auto && o.certificate.is_none(),
+    }
 }
 
 impl Validator<'_> {
@@ -208,6 +226,21 @@ impl Validator<'_> {
         if known.contains_key(reference_key(reference)) {
             return;
         }
+        // A tenant's object: whether anything outside the tenant exists is not its business.
+        // A reference outside the tenant is refused by the tenant rules whether it exists or
+        // not, and the hint never lists other objects.
+        if let Some(prefix) = self.tenant_prefix_of_path(path) {
+            let own = reference_key(reference)
+                .strip_suffix("@api")
+                .is_some_and(|bare| bare.starts_with(&prefix));
+            if own {
+                self.push(
+                    Diagnostic::error(path, format!("{kind} `{name}` does not exist"))
+                        .with_hint(format!("define it, with a name starting `{prefix}`")),
+                );
+            }
+            return;
+        }
         let hint = match closest_match(name, known.keys().map(String::as_str)) {
             Some(near) => format!("did you mean `{near}`?"),
             None if known.is_empty() => format!("no {kind}s are defined in this file"),
@@ -223,6 +256,21 @@ impl Validator<'_> {
         self.push(
             Diagnostic::error(path, format!("{kind} `{name}` does not exist")).with_hint(hint),
         );
+    }
+
+    /// The prefix of the tenant owning the object `path` lies under (an API object under a
+    /// tenant's prefix), if any.
+    fn tenant_prefix_of_path(&self, path: &str) -> Option<String> {
+        if !self.merged || self.config.tenants.is_empty() {
+            return None;
+        }
+        let rest = ["routes", "services", "middlewares"]
+            .iter()
+            .find_map(|section| path.strip_prefix(section))?;
+        let key = rest.strip_prefix("[\"")?;
+        let key = &key[..key.find("\"]")?];
+        let bare = key.strip_suffix("@api")?;
+        crate::tenant::owner(&self.config.tenants, bare).map(|(t, tenant)| tenant.prefix_of(t))
     }
 
     fn check_regex(&mut self, path: &str, pattern: &str) {
@@ -450,8 +498,10 @@ impl Validator<'_> {
             self.check_terminal_position(&path, route);
             self.check_route_cache(&path, route);
             self.check_route_consumer_keys(&path, route);
+            self.check_route_admission(&path, route);
             self.check_route_oidc(&path, route, expr.as_ref());
             self.check_route_validation(&path, route);
+            self.check_route_edge(&path, route, expr.as_ref());
             if let Some(mirror) = &route.mirror {
                 let p = format!("{path}.mirror");
                 self.check_reference(
@@ -758,6 +808,7 @@ impl Validator<'_> {
         }
         self.check_service_health(path, service);
         self.check_service_retries(path, service);
+        self.check_service_balancing(path, service);
         let t = &service.timeouts;
         for (field, zero) in [
             ("connect", t.connect.is_zero()),
@@ -836,12 +887,6 @@ impl Validator<'_> {
                     );
                 }
             }
-        }
-        if !service.backends.is_empty() && service.backends.iter().all(|b| b.backup) {
-            self.error(
-                format!("{path}.backends"),
-                "every backend is a backup; at least one must be a primary",
-            );
         }
         if service.max_requests == Some(0) {
             self.error(format!("{path}.max_requests"), "must be at least 1");
@@ -1069,7 +1114,10 @@ impl Validator<'_> {
                 Middleware::Validate(v) => self.check_validate(&path, v),
                 Middleware::Transform(t) => self.check_transform(&path, t),
                 Middleware::Oidc(o) => self.check_oidc(&path, o),
+                Middleware::Abuse(a) => self.check_abuse(&path, a),
+                Middleware::Admission(a) => self.check_admission(&path, a),
                 Middleware::ClientCert(c) => {
+                    self.check_client_cert_identity(&path, c);
                     for (i, pattern) in c.allow.iter().enumerate() {
                         if pattern.trim().is_empty() {
                             self.error(
@@ -1337,7 +1385,14 @@ impl Validator<'_> {
             let entry_path = path_index(&format!("{path}.users"), i);
             match entry.split_once(':') {
                 Some((user, hash)) if !user.is_empty() => match hash_strength(hash) {
-                    Some(HashStrength::Strong) => {}
+                    Some(HashStrength::Strong) => {
+                        if let Some(problem) = crate::password::cost_problem(hash) {
+                            self.push(
+                                Diagnostic::error(&entry_path, format!("the password of `{user}`: {problem}"))
+                                    .with_hint("every request with a wrong password does this work; create a new hash with `rdock hash --user <name>` (the limits follow OWASP's Password Storage Cheat Sheet)"),
+                            );
+                        }
+                    }
                     Some(HashStrength::Weak) => self.push(
                         Diagnostic::warning(&entry_path, format!("the password of `{user}` uses a weak hash"))
                             .with_hint("MD5 and SHA-1 hashes are fast to brute-force; create an argon2id entry with `rdock hash --user <name>`"),
@@ -1370,6 +1425,9 @@ impl Validator<'_> {
     }
 
     fn check_rate_limit(&mut self, path: &str, limit: &RateLimitConfig) {
+        if limit.key == crate::values::RateLimitKey::Ja4 {
+            self.push(edge::fingerprint_warning(&format!("{path}.key"), "limit"));
+        }
         self.check_not_zero(&format!("{path}.average"), limit.average == 0);
         self.check_not_zero(&format!("{path}.burst"), limit.burst == Some(0));
         self.check_not_zero(&format!("{path}.period"), limit.period.is_zero());
@@ -2470,7 +2528,15 @@ impl Validator<'_> {
     /// ACME on replicas that share no certificate storage (ADR-0029).
     fn check_kubernetes_acme(&mut self, allow_acme: bool) {
         const PATH: &str = "providers.kubernetes";
-        if self.config.effective_acme().is_some() {
+        // Members of a cluster whose store is the control plane share certificates, the ACME
+        // account and challenge answers through it (ADR-0031).
+        let shared = self
+            .config
+            .cluster
+            .as_ref()
+            .and_then(|c| c.effective_store())
+            .is_some_and(|s| s.kind == crate::cluster::ClusterStoreType::Control);
+        if self.config.effective_acme().is_some() && !shared {
             if allow_acme {
                 self.push(
                     Diagnostic::warning(
@@ -2537,13 +2603,23 @@ fn public_ip(host: &str) -> Option<IpAddr> {
     (!local).then_some(ip)
 }
 
+mod admission;
+mod balancing;
 mod cache;
+mod cluster;
+mod edge;
 mod extensions;
 mod gateway;
+mod http2;
+mod http3;
 mod oidc;
+mod resumption;
 mod shaping;
+mod socket;
 mod static_files;
 mod tcp;
+mod tenants;
 #[cfg(test)]
 mod tests;
 mod udp;
+mod upgrade;

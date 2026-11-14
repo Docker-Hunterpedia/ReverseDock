@@ -26,6 +26,10 @@ export type AuditRecord = {
     result: AuditResult;
     seq: number;
     /**
+     * The tenant of a tenant-scoped caller.
+     */
+    tenant?: string | null;
+    /**
      * RFC 3339.
      */
     time: string;
@@ -39,6 +43,224 @@ export type AuditResult = 'ok' | 'denied' | 'failed';
 export type BackendRef = {
     backend: string;
     service: string;
+};
+
+/**
+ * Why a rollout halted.
+ */
+export type ClusterHalt = {
+    /**
+     * RFC 3339.
+     */
+    at: string;
+    /**
+     * The instance that refused, or the canary that did not report.
+     */
+    instance?: string | null;
+    reason: string;
+};
+
+/**
+ * One enrolled data plane.
+ */
+export type ClusterInstance = {
+    /**
+     * Expiry of its client certificate (its cluster identity), RFC 3339.
+     */
+    certificate_not_after: string;
+    /**
+     * RFC 3339.
+     */
+    enrolled_at: string;
+    /**
+     * The reason of its last refusal, `revision N: message`.
+     */
+    last_error?: string | null;
+    last_report?: ClusterReport | null;
+    /**
+     * When it last called the control plane, RFC 3339.
+     */
+    last_seen?: string | null;
+    /**
+     * The newest published revision.
+     */
+    latest: number;
+    /**
+     * Its name in the cluster.
+     */
+    name: string;
+    revoked: boolean;
+    /**
+     * The revision it serves, as it last reported.
+     */
+    serving: number;
+    state: ClusterInstanceState;
+    /**
+     * The revision the rollout gives it now (the newest, or the stable one while a canary
+     * runs or after a halt).
+     */
+    target: number;
+    /**
+     * The rdock version it last reported.
+     */
+    version?: string | null;
+};
+
+/**
+ * How an instance stands.
+ */
+export type ClusterInstanceState = 'synced' | 'behind' | 'error' | 'offline' | 'revoked';
+
+/**
+ * `GET /api/v1/cluster/instances`.
+ */
+export type ClusterInstances = {
+    cluster_id: string;
+    instances: Array<ClusterInstance>;
+    /**
+     * The newest published revision.
+     */
+    latest: number;
+    /**
+     * `control.name`.
+     */
+    name?: string | null;
+    rollout: ClusterRollout;
+};
+
+/**
+ * `POST /api/v1/cluster/revisions`: a document to publish, or a revision to roll back to.
+ */
+export type ClusterPublishRequest = {
+    /**
+     * The configuration to publish (an `rdock.yaml` as JSON, without `cluster` and
+     * `control`).
+     */
+    document?: unknown;
+    /**
+     * Publish this earlier revision's document again, as a new revision.
+     */
+    rollback_to?: number | null;
+};
+
+/**
+ * A data plane's last report on a bundle.
+ */
+export type ClusterReport = {
+    /**
+     * RFC 3339.
+     */
+    at: string;
+    /**
+     * The data plane's diagnostics (`severity`, `path`, `message`, `hint`) for a NACK, or
+     * its warnings.
+     */
+    diagnostics: Array<{
+        [key: string]: unknown;
+    }>;
+    /**
+     * The revision reported on.
+     */
+    revision: number;
+    /**
+     * `ack` or `nack`.
+     */
+    verdict: string;
+};
+
+/**
+ * One published revision.
+ */
+export type ClusterRevision = {
+    published_at: string;
+    published_by?: string | null;
+    /**
+     * Instances whose last report refused this revision, with their diagnostics.
+     */
+    refused_by: Array<{
+        [key: string]: unknown;
+    }>;
+    revision: number;
+    /**
+     * The revision whose document this one republishes.
+     */
+    rollback_of?: number | null;
+    /**
+     * How its rollout ended or stands: `state` (`canary`, `soaking`, `halted`, `complete`,
+     * `abandoned`, `superseded`), `reason`, `at`.
+     */
+    rollout?: {
+        [key: string]: unknown;
+    } | null;
+    /**
+     * SHA-256 of the document's canonical JSON.
+     */
+    sha256: string;
+};
+
+/**
+ * `GET /api/v1/cluster/revisions`.
+ */
+export type ClusterRevisions = {
+    cluster_id: string;
+    latest: number;
+    revisions: Array<ClusterRevision>;
+    rollout: ClusterRollout;
+};
+
+/**
+ * The rollout of the newest revision.
+ */
+export type ClusterRollout = {
+    canary?: string | null;
+    canary_acked_at?: string | null;
+    completed_at?: string | null;
+    halt?: ClusterHalt | null;
+    /**
+     * `canary`, or `all` (mode `all`, the first revision, rollbacks).
+     */
+    mode: string;
+    /**
+     * Instances given `revision`.
+     */
+    offered: Array<string>;
+    phase: ClusterRolloutPhase;
+    /**
+     * Who resumed it.
+     */
+    resumed_by?: string | null;
+    /**
+     * The revision being rolled out.
+     */
+    revision: number;
+    settings: ClusterRolloutSettings;
+    /**
+     * While soaking: when the rest are given the revision.
+     */
+    soak_ends_at?: string | null;
+    /**
+     * The last revision whose rollout completed; instances not given `revision` serve it.
+     */
+    stable: number;
+    started_at?: string | null;
+};
+
+/**
+ * Where a rollout stands.
+ */
+export type ClusterRolloutPhase = 'none' | 'canary' | 'soaking' | 'complete' | 'halted';
+
+/**
+ * The rollout settings in effect (`control.rollout`).
+ */
+export type ClusterRolloutSettings = {
+    canary?: string | null;
+    canary_timeout_seconds: number;
+    /**
+     * `canary` or `all`.
+     */
+    mode: string;
+    soak_seconds: number;
 };
 
 export type Code = {
@@ -97,6 +319,17 @@ export type Import = {
 };
 
 /**
+ * `POST /api/v1/cluster/tokens`.
+ */
+export type JoinTokenRequest = {
+    /**
+     * How long the token stays usable, in seconds (60 to 2,592,000); `control.join_token_ttl`
+     * when omitted.
+     */
+    ttl_seconds?: number | null;
+};
+
+/**
  * What `GET /api/v1/auth/sessions` shows of a session.
  */
 export type Listed = {
@@ -130,6 +363,10 @@ export type NewUser = {
     name: string;
     password: string;
     role: Role;
+    /**
+     * Scope the user to this tenant (`tenants.<name>`).
+     */
+    tenant?: string | null;
 };
 
 /**
@@ -230,6 +467,11 @@ export type TokenRequest = {
     expires_in_days?: number | null;
     name: string;
     role: Access;
+    /**
+     * Scope the token to this tenant. A tenant-scoped caller's tokens always have its
+     * tenant.
+     */
+    tenant?: string | null;
 };
 
 export type TokenView = {
@@ -242,6 +484,25 @@ export type TokenView = {
     last_used_from?: string | null;
     name: string;
     role: Access;
+    /**
+     * The tenant the token is scoped to, if any.
+     */
+    tenant?: string | null;
+};
+
+/**
+ * What `POST /upgrade` takes.
+ */
+export type UpgradeBody = {
+    /**
+     * Install a binary whose version is older than the running one. Default `false`: an older
+     * version (perhaps one with a known vulnerability, signed by the same key) is refused.
+     */
+    allow_downgrade?: boolean;
+    /**
+     * The new binary; `upgrade.binary` (default `/usr/local/bin/rdock`) when omitted.
+     */
+    binary?: string | null;
 };
 
 export type UserChange = {
@@ -252,6 +513,10 @@ export type UserChange = {
      */
     reset_mfa?: boolean;
     role?: Role | null;
+    /**
+     * Scopes the user to this tenant; `null` removes the scope.
+     */
+    tenant?: string | null;
 };
 
 export type UserView = {
@@ -260,7 +525,20 @@ export type UserView = {
     mfa: boolean;
     name: string;
     role: Role;
+    /**
+     * The tenant the user is scoped to (`tenants.<name>`), if any.
+     */
+    tenant?: string | null;
 };
+
+/**
+ * What a banned key gets.
+ */
+export type RdockAbuseAction = 'deny' | 'tarpit' | 'tag';
+
+export type RdockAbuseEvent = number | string;
+
+export type RdockAbuseKey = string;
 
 /**
  * Access log settings.
@@ -573,6 +851,26 @@ export type RdockAdminTokens = {
      * Lifetime of a new token when its creator gives none, in days (1–365).
      */
     default_expiry_days?: number;
+};
+
+/**
+ * How `admission` adapts its limit.
+ */
+export type RdockAdmissionMode = 'aimd' | 'gradient';
+
+/**
+ * How much of the limit each lower priority class may fill.
+ */
+export type RdockAdmissionShares = {
+    /**
+     * Routes with `priority_class: normal`, in percent of the limit (default 90).
+     */
+    normal?: number;
+    /**
+     * Routes with `priority_class: sheddable`, in percent of the limit (default 75; at most
+     * `normal`).
+     */
+    sheddable?: number;
 };
 
 /**
@@ -910,14 +1208,28 @@ export type RdockBackend = {
      */
     address: RdockBackendAddress;
     /**
-     * Only used when no primary backend is available.
+     * Only used when no primary backend is available: the same as `priority: 1`.
      */
     backup?: boolean;
+    /**
+     * Zones whose proxies should use this backend under `locality: { mode: prefer }`, instead
+     * of its own `zone` (Kubernetes topology hints, `hints.forZones`).
+     */
+    for_zones?: Array<string>;
+    /**
+     * Priority tier from 0 (the default, used first) to 7. See the service's `failover`.
+     * Not together with `backup`.
+     */
+    priority?: number | null;
     /**
      * Relative share of traffic.
      */
     weight?: number;
-    [key: string]: unknown | RdockBackendAddress | boolean | number | undefined;
+    /**
+     * The zone the backend runs in, e.g. `eu-west-1a`, for `locality: { mode: prefer }`.
+     */
+    zone?: string | null;
+    [key: string]: unknown | RdockBackendAddress | boolean | Array<string> | number | null | number | string | null | undefined;
 };
 
 /**
@@ -1038,6 +1350,137 @@ export type RdockClientCertForward = 'none' | 'traefik' | 'xfcc';
 export type RdockClientIpHeader = 'auto' | 'x-forwarded-for' | 'x-real-ip' | 'cf-connecting-ip';
 
 /**
+ * The data-plane side of a cluster.
+ */
+export type RdockCluster = {
+    /**
+     * The control plane this data plane takes its configuration from.
+     */
+    control?: RdockClusterControl | null;
+    /**
+     * This instance's name in leases and the control plane's instance list: letters, digits,
+     * `.`, `-` and `_`, at most 63 characters. Default: the identity the control plane gave
+     * at enrolment, or (without a control plane) an id generated once and kept in
+     * `$RDOCK_DATA_DIR/cluster/instance`.
+     */
+    instance?: string | null;
+    /**
+     * How `rate_limit` and `quota` with `scope: cluster` share their budgets.
+     */
+    limits?: RdockClusterLimits | null;
+    /**
+     * Where certificates, the ACME account, leases and challenge answers are shared. Default:
+     * the control plane when `control` is set.
+     */
+    store?: RdockClusterStore | null;
+    [key: string]: unknown | RdockClusterControl | null | string | null | RdockClusterLimits | null | RdockClusterStore | null | undefined;
+};
+
+/**
+ * How a data plane reaches its control plane.
+ */
+export type RdockClusterControl = {
+    /**
+     * The cluster CA certificate (PEM), as `rdock control ca` prints it. One of `ca_file` and
+     * `ca_pin` is required.
+     */
+    ca_file?: string | null;
+    /**
+     * The SHA-256 of the cluster CA certificate (DER), as `sha256:<64 hex digits>`; `rdock
+     * control token create` prints it. The first connection accepts the control plane only
+     * when its chain contains a CA with this digest; the CA is then kept in `identity_dir`.
+     */
+    ca_pin?: string | null;
+    /**
+     * Where the instance's key, certificate and the cluster CA are kept (mode 0700). Default
+     * `$RDOCK_DATA_DIR/cluster`.
+     */
+    identity_dir?: string | null;
+    /**
+     * The single-use join token from `rdock control token create`, used only while the
+     * instance has no identity yet. A secret: reference a file, e.g.
+     * `"${file:/run/secrets/rdock-join}"`.
+     */
+    join_token?: string | null;
+    /**
+     * How long one request for the next bundle waits on the control plane before it is asked
+     * again. Default 30s (5s–5m).
+     */
+    poll_timeout?: RdockDuration;
+    /**
+     * The control plane's cluster address, e.g. `https://control.example.com:7443`. Always
+     * `https`.
+     */
+    url: RdockHttpUrl;
+};
+
+/**
+ * Shared budgets for `rate_limit` and `quota` with `scope: cluster` (ADR-0031).
+ *
+ * Each instance claims a part of each key's budget from the store ahead of use and admits
+ * requests against what it claimed, so the request path never waits on the store. The
+ * cluster admits at most `L + N × max(c, ⌈L / N⌉)` per key and window, where `L` is the
+ * limit, `N` the number of instances, `c = max(1, ⌈L × headroom_percent / (100 × N)⌉)` the
+ * headroom an instance may use beyond its claims, and `⌈L / N⌉` what an instance admits for a
+ * key new to it until its first claim returns.
+ */
+export type RdockClusterLimits = {
+    /**
+     * `share` (default) or `instance`: what an instance enforces while the store is away.
+     */
+    fallback?: RdockLimitFallback;
+    /**
+     * How far an instance may admit beyond the budget it has claimed, as a percentage of the
+     * limit split between the instances: larger values absorb store latency at high request
+     * rates, smaller ones tighten the bound. Default 10 (0–100).
+     */
+    headroom_percent?: number;
+    /**
+     * The Redis-compatible server, for `store: redis`.
+     */
+    redis?: RdockRedisStore | null;
+    /**
+     * `cluster` (default) or `redis`.
+     */
+    store?: RdockLimitStoreType;
+    /**
+     * How often claims, membership and recovery are attended to (claims a request needs are
+     * sent at once). Default 1s (100ms–10s).
+     */
+    sync_interval?: RdockDuration;
+};
+
+/**
+ * Where a cluster shares certificates, the ACME account, leases and challenge answers.
+ */
+export type RdockClusterStore = {
+    /**
+     * How long the instance that orders a certificate waits for every live member to hold an
+     * HTTP-01 or TLS-ALPN-01 answer before the CA is told to validate. Members that have not
+     * confirmed by then cannot answer; validation goes ahead. Default 10s (1s–2m).
+     */
+    barrier_timeout?: RdockDuration;
+    /**
+     * How long a lease on a certificate name lasts unless its holder renews it (every third of
+     * it). Default 60s (10s–10m).
+     */
+    lease_ttl?: RdockDuration;
+    /**
+     * The shared directory, for `type: directory`.
+     */
+    path?: string | null;
+    /**
+     * `control` (default) or `directory`.
+     */
+    type?: RdockClusterStoreType;
+};
+
+/**
+ * The kinds of cluster store.
+ */
+export type RdockClusterStoreType = 'control' | 'directory';
+
+/**
  * Compression algorithms.
  */
 export type RdockCompressAlgorithm = 'gzip' | 'br' | 'zstd';
@@ -1077,6 +1520,11 @@ export type RdockConfig = {
         [key: string]: RdockCertificate;
     };
     /**
+     * Membership of a cluster (H-HA-01…03): the control plane this data plane takes its
+     * configuration from, and where certificates are shared.
+     */
+    cluster?: RdockCluster | null;
+    /**
      * API clients and users that requests are attributed to, with their API keys (stored
      * hashed). The `api` provider may add consumers and keys (`rdock consumers`).
      */
@@ -1084,9 +1532,18 @@ export type RdockConfig = {
         [key: string]: RdockConsumer;
     };
     /**
+     * The control plane's own settings, read only by `rdock control run`.
+     */
+    control?: RdockControlPlane | null;
+    /**
      * Defaults applied to routes that do not set a value.
      */
     defaults?: RdockDefaults;
+    /**
+     * GeoIP databases for `ClientCountry`, `ClientContinent` and `ClientASN` (H-SEC-04). No
+     * database is bundled or downloaded.
+     */
+    geoip?: RdockGeoIp | null;
     /**
      * Start-up and shutdown behaviour.
      */
@@ -1098,6 +1555,10 @@ export type RdockConfig = {
     listeners?: {
         [key: string]: RdockListener;
     };
+    /**
+     * The proxy's own zone and whether services prefer backends in it (H-HA-05).
+     */
+    locality?: RdockLocality | null;
     /**
      * Reusable request and response policies.
      */
@@ -1118,6 +1579,10 @@ export type RdockConfig = {
     routes?: {
         [key: string]: RdockRoute;
     };
+    /**
+     * The proxy's worker threads; read at start, so a change needs a restart.
+     */
+    runtime?: RdockRuntimeSettings | null;
     /**
      * External secret stores that secret fields can reference (`${vault:…}`).
      */
@@ -1145,6 +1610,14 @@ export type RdockConfig = {
         [key: string]: RdockTcpService;
     };
     /**
+     * Tenants of the admin API (H-SEC-07): API tokens and users scoped to a tenant read and
+     * write only the API objects under its name prefix, whose routes stay inside its host
+     * claims. Without this section, nothing is scoped.
+     */
+    tenants?: {
+        [key: string]: RdockTenant;
+    };
+    /**
      * UDP routes: which `udp` listener's datagrams go to which UDP service.
      */
     udp_routes?: {
@@ -1157,6 +1630,11 @@ export type RdockConfig = {
         [key: string]: RdockUdpService;
     };
     /**
+     * In-place binary upgrades (`rdock upgrade`, `SIGUSR2`): the binary, the drain bound and
+     * the start timeout.
+     */
+    upgrade?: RdockUpgrade | null;
+    /**
      * Configuration format version. Only `1` exists; omit it to use the latest.
      */
     version?: number | null;
@@ -1164,25 +1642,27 @@ export type RdockConfig = {
         [key: string]: RdockCacheStore;
     } | {
         [key: string]: RdockCertificate;
-    } | {
+    } | RdockCluster | null | {
         [key: string]: RdockConsumer;
-    } | RdockDefaults | RdockLifecycle | {
+    } | RdockControlPlane | null | RdockDefaults | RdockGeoIp | null | RdockLifecycle | {
         [key: string]: RdockListener;
-    } | {
+    } | RdockLocality | null | {
         [key: string]: RdockMiddleware;
     } | RdockObservability | RdockProviders | {
         [key: string]: RdockRoute;
-    } | RdockSecrets | RdockSecurity | {
+    } | RdockRuntimeSettings | null | RdockSecrets | RdockSecurity | {
         [key: string]: RdockService;
     } | {
         [key: string]: RdockTcpRoute;
     } | {
         [key: string]: RdockTcpService;
     } | {
+        [key: string]: RdockTenant;
+    } | {
         [key: string]: RdockUdpRoute;
     } | {
         [key: string]: RdockUdpService;
-    } | number | null | undefined;
+    } | RdockUpgrade | null | number | null | undefined;
 };
 
 /**
@@ -1209,6 +1689,51 @@ export type RdockConsumer = {
      * every reload and watched like the configuration file.
      */
     keys_file?: string | null;
+};
+
+/**
+ * The control-plane side of a cluster, read by `rdock control run` (never by `rdock run`).
+ */
+export type RdockControlPlane = {
+    /**
+     * Published revisions kept for listing and rollback. Default 50 (1–1000).
+     */
+    history?: number;
+    /**
+     * Lifetime of the client certificate each data plane receives; it is renewed when a third
+     * is left. A data plane whose certificate expires while the control plane is away keeps
+     * serving but must enrol again with a new token. Default 30d (1h–90d).
+     */
+    identity_lifetime?: RdockDuration;
+    /**
+     * How long a join token from `rdock control token create` stays usable. Default 1h
+     * (1m–30d).
+     */
+    join_token_ttl?: RdockDuration;
+    /**
+     * The cluster listener data planes connect to (mutual TLS, HTTP/2). Default
+     * `127.0.0.1:7443`: set an address other machines reach.
+     */
+    listener?: RdockListenAddress;
+    /**
+     * A display name for the cluster.
+     */
+    name?: string | null;
+    /**
+     * DNS names and IP addresses on the control plane's server certificate, as data planes
+     * write them in `cluster.control.url`. `localhost`, `127.0.0.1`, `::1` and the listener's
+     * IP are always included.
+     */
+    names?: Array<string>;
+    /**
+     * A data plane that has not asked for a bundle for this long is shown as offline and is
+     * not chosen as a canary. Default 90s (10s–1h).
+     */
+    offline_after?: RdockDuration;
+    /**
+     * How a published revision reaches the data planes: one canary first, then the rest.
+     */
+    rollout?: RdockRollout;
 };
 
 /**
@@ -1359,6 +1884,11 @@ export type RdockDockerProvider = {
 };
 
 /**
+ * A duration, or `unlimited`.
+ */
+export type RdockDrainLimit = RdockDuration | 'unlimited';
+
+/**
  * Duration made of numbers with units: ms, s, m, h, d.
  */
 export type RdockDuration = string;
@@ -1420,6 +1950,40 @@ export type RdockExternalAccountBinding = {
 };
 
 /**
+ * A number with up to three decimals, such as 1.4.
+ */
+export type RdockFactor = number;
+
+/**
+ * How traffic moves between backend priority tiers.
+ */
+export type RdockFailover = 'strict' | 'spill';
+
+/**
+ * The failure-percentage detector, with Envoy's defaults.
+ */
+export type RdockFailurePercentageDetector = {
+    /**
+     * Turns the detector on. Default `false`.
+     */
+    enabled?: boolean;
+    /**
+     * Backends with enough requests needed before anything is evaluated. Default 5; at
+     * least 3.
+     */
+    minimum_hosts?: number;
+    /**
+     * Requests in the interval for a backend to count. Default 50.
+     */
+    request_volume?: number;
+    /**
+     * Failure share that ejects, in percent. Default 85.
+     */
+    threshold?: number;
+    [key: string]: unknown | boolean | number | undefined;
+};
+
+/**
  * File provider.
  */
 export type RdockFileProvider = {
@@ -1432,6 +1996,60 @@ export type RdockFileProvider = {
      */
     watch?: boolean;
     [key: string]: unknown | Array<string> | boolean | undefined;
+};
+
+/**
+ * A number, or `unlimited` to remove the limit.
+ */
+export type RdockFloodLimit = number | 'unlimited';
+
+/**
+ * GeoIP databases in the MaxMind DB format (H-SEC-04, ADR-0031): MaxMind GeoLite2 or GeoIP2,
+ * DB-IP Lite or IPinfo Lite files that you download and keep current. The files are read into
+ * memory and read again when they change.
+ */
+export type RdockGeoIp = {
+    /**
+     * An ASN database (`.mmdb`, e.g. GeoLite2-ASN) for `ClientASN`.
+     */
+    asn_database?: string | null;
+    /**
+     * A country database (`.mmdb`): gives `ClientCountry` and `ClientContinent`. A file that
+     * also carries ASNs (IPinfo Lite) gives `ClientASN` as well.
+     */
+    database?: string | null;
+    /**
+     * Opt-in access-log fields; both off by default, since a location tied to an IP address
+     * is personal data in many jurisdictions.
+     */
+    log?: RdockGeoIpLog;
+    /**
+     * The oldest database build accepted, by the build time in its metadata. Default 30 days:
+     * the GeoLite End User License Agreement (updated 2026-02-12) requires deleting a
+     * version within thirty days of a newer release.
+     */
+    max_age?: RdockDuration;
+    /**
+     * What an older database does: `warn` (the default) logs a warning and keeps using it;
+     * `refuse` refuses to load it, so the configuration that needs it is refused.
+     */
+    on_stale?: RdockOnStale;
+    [key: string]: unknown | string | null | string | null | RdockGeoIpLog | RdockDuration | RdockOnStale | undefined;
+};
+
+/**
+ * GeoIP fields in the access log.
+ */
+export type RdockGeoIpLog = {
+    /**
+     * Log `asn`.
+     */
+    asn?: boolean;
+    /**
+     * Log `country` (ISO 3166-1 alpha-2).
+     */
+    country?: boolean;
+    [key: string]: unknown | boolean | undefined;
 };
 
 /**
@@ -1500,14 +2118,15 @@ export type RdockHealth = {
      */
     passive?: RdockPassiveHealth | null;
     /**
-     * A backend that becomes healthy ramps up its weight over this time.
+     * A backend that becomes healthy again ramps up its weight: a duration such as `30s`, or
+     * `{ window, aggression, min_weight_percent, on }`. Not with hash policies.
      */
-    slow_start?: RdockDuration | null;
+    slow_start?: RdockSlowStart | null;
     /**
      * What happens when no backend is healthy.
      */
     when_all_down?: RdockWhenAllDown;
-    [key: string]: unknown | RdockActiveHealth | null | RdockPassiveHealth | null | RdockDuration | null | RdockWhenAllDown | undefined;
+    [key: string]: unknown | RdockActiveHealth | null | RdockPassiveHealth | null | RdockSlowStart | null | RdockWhenAllDown | undefined;
 };
 
 /**
@@ -1519,6 +2138,21 @@ export type RdockHealthMethod = 'GET' | 'HEAD';
  * How a probe checks a backend.
  */
 export type RdockHealthMode = 'http' | 'tcp' | 'grpc';
+
+/**
+ * Hedged requests (planned).
+ */
+export type RdockHedge = {
+    /**
+     * Time without a response after which the hedge would be sent.
+     */
+    delay?: RdockDuration | null;
+    /**
+     * Attempts in flight at most, the first included.
+     */
+    max_attempts?: number | null;
+    [key: string]: unknown | RdockDuration | null | number | null | undefined;
+};
 
 /**
  * Hetzner DNS through the Hetzner Cloud API (`type: hetzner`).
@@ -1565,6 +2199,16 @@ export type RdockHsts = {
     preload?: boolean;
     [key: string]: unknown | boolean | RdockDuration | undefined;
 };
+
+/**
+ * QUIC congestion controllers (quinn 0.11).
+ */
+export type RdockHttp3Congestion = 'cubic' | 'newreno' | 'bbr';
+
+/**
+ * When an HTTP/3 listener sends QUIC Retry packets.
+ */
+export type RdockHttp3Retry = 'auto' | 'always' | 'never';
 
 export type RdockHttpUrl = string;
 
@@ -1743,6 +2387,11 @@ export type RdockKubernetesProvider = {
 export type RdockKubernetesServiceType = 'load_balancer' | 'cluster_ip' | 'node_port';
 
 /**
+ * What a `peak_ewma` latency sample measures.
+ */
+export type RdockLatencyMeasure = 'first_byte' | 'last_byte';
+
+/**
  * A p99 latency threshold.
  */
 export type RdockLatencyRule = {
@@ -1763,7 +2412,7 @@ export type RdockLatencyRule = {
 /**
  * Backend selection policies.
  */
-export type RdockLbPolicy = 'round_robin' | 'random' | 'least_conn' | 'least_requests' | 'p2c' | 'ip_hash' | 'header_hash' | 'cookie_hash';
+export type RdockLbPolicy = 'round_robin' | 'random' | 'least_conn' | 'least_requests' | 'p2c' | 'ip_hash' | 'header_hash' | 'cookie_hash' | 'peak_ewma';
 
 /**
  * Start-up and shutdown behaviour.
@@ -1778,9 +2427,24 @@ export type RdockLifecycle = {
 };
 
 /**
+ * What an instance enforces while the limit store cannot be reached.
+ */
+export type RdockLimitFallback = 'share' | 'instance';
+
+/**
  * Rate-limit response headers.
  */
 export type RdockLimitHeaders = 'off' | 'draft';
+
+/**
+ * Where a limit is counted (ADR-0031).
+ */
+export type RdockLimitScope = 'instance' | 'cluster';
+
+/**
+ * Where cluster-scoped limits keep their shared counters.
+ */
+export type RdockLimitStoreType = 'cluster' | 'redis';
 
 /**
  * Request size limits. Requests over a limit are answered with 431, 414 or 413.
@@ -1830,6 +2494,17 @@ export type RdockListener = {
      */
     address: RdockListenAddress;
     /**
+     * HTTP/2 settings of `http` (h2c) and `https` listeners (H-PERF-03, ADR-0031). Unset
+     * values keep the behaviour before v0.9.
+     */
+    http2?: RdockListenerHttp2 | null;
+    /**
+     * HTTP/3 over QUIC on the same address, `https` listeners only (experimental, ADR-0032):
+     * the listener then also owns the UDP socket of its address. Needs a build with the
+     * `http3` cargo feature; off by default.
+     */
+    http3?: RdockListenerHttp3 | null;
+    /**
      * A path answered `200 OK` for any host before routing, for load-balancer health
      * monitors such as Cloudflare Load Balancing, e.g. `/rdock/ping`.
      */
@@ -1848,6 +2523,11 @@ export type RdockListener = {
      */
     sessions?: RdockUdpSessions | null;
     /**
+     * Options of the listening socket and of the connections it accepts (ADR-0031). Unset
+     * options keep the kernel's behaviour, except `backlog`, which defaults to 4096.
+     */
+    socket?: RdockListenerSocket | null;
+    /**
      * `tcp` listeners: answer a protocol's request to start TLS before reading the TLS
      * ClientHello. Off by default.
      */
@@ -1860,13 +2540,239 @@ export type RdockListener = {
      * TLS termination settings.
      */
     tls?: RdockListenerTls | null;
-    [key: string]: unknown | RdockListenAddress | string | null | RdockListenerProtocol | null | RdockProxyProtocolIn | null | RdockUdpSessions | null | RdockStartTls | null | RdockListenerTimeouts | RdockListenerTls | null | undefined;
+    [key: string]: unknown | RdockListenAddress | RdockListenerHttp2 | null | RdockListenerHttp3 | null | string | null | RdockListenerProtocol | null | RdockProxyProtocolIn | null | RdockUdpSessions | null | RdockListenerSocket | null | RdockStartTls | null | RdockListenerTimeouts | RdockListenerTls | null | undefined;
+};
+
+/**
+ * HTTP/2 settings of a listener (RFC 9113 §6.5.2). Unset values keep what Pingora 0.9.1 and
+ * h2 0.4.20 do; the limits that protect against stream and reset floods can only be removed
+ * by writing `unlimited`.
+ */
+export type RdockListenerHttp2 = {
+    /**
+     * Flow-control window of the whole connection. Default 65535 bytes; 65535 to 2^31-1.
+     */
+    initial_connection_window?: RdockByteSize | null;
+    /**
+     * Flow-control window of each stream (`SETTINGS_INITIAL_WINDOW_SIZE`): how much request
+     * body a client may send before rdock reads it. Default 65535 bytes (the protocol's
+     * initial value); at most 2^31-1.
+     */
+    initial_stream_window?: RdockByteSize | null;
+    /**
+     * Streams a client may have open at once (`SETTINGS_MAX_CONCURRENT_STREAMS`). Default 100
+     * (Pingora's bound); at most 10000 unless `unlimited`.
+     */
+    max_concurrent_streams?: RdockFloodLimit | null;
+    /**
+     * Largest frame payload rdock accepts (`SETTINGS_MAX_FRAME_SIZE`). Default 16384; 16384
+     * to 16777215 (RFC 9113 §6.5.2).
+     */
+    max_frame_size?: RdockByteSize | null;
+    /**
+     * Largest decoded request header list (`SETTINGS_MAX_HEADER_LIST_SIZE`). Default 64KiB
+     * (Pingora's bound); 1KiB to 16MiB.
+     */
+    max_header_list_size?: RdockByteSize | null;
+    /**
+     * Streams rdock resets because the client misbehaved before the connection is closed (the
+     * `MadeYouReset` mitigation, CVE-2025-8671). Default 1024 (h2's); at most 100000 unless
+     * `unlimited`.
+     */
+    max_local_error_reset_streams?: RdockFloodLimit | null;
+    /**
+     * Streams a client may reset before rdock accepted them, at once (the HTTP/2 Rapid Reset
+     * mitigation, CVE-2023-44487). Default 20 (h2's); at most 10000 unless `unlimited`.
+     */
+    max_pending_accept_reset_streams?: RdockFloodLimit | null;
+    /**
+     * Response data buffered per stream for a client that reads slowly. Default 400KiB (h2's);
+     * 16KiB to 16MiB.
+     */
+    max_send_buffer?: RdockByteSize | null;
+    [key: string]: unknown | RdockByteSize | null | RdockByteSize | null | RdockFloodLimit | null | RdockByteSize | null | RdockByteSize | null | RdockFloodLimit | null | RdockFloodLimit | null | RdockByteSize | null | undefined;
+};
+
+/**
+ * HTTP/3 settings of an `https` listener (experimental, ADR-0032). Every limit is bounded;
+ * nothing is unlimited.
+ */
+export type RdockListenerHttp3 = {
+    /**
+     * Add `Alt-Svc: h3=":<port>"` to this listener's HTTP/1 and HTTP/2 responses while the
+     * QUIC endpoint serves (RFC 9114 §3.1.1). Default `true`.
+     */
+    advertise?: boolean;
+    /**
+     * How long clients may remember the advertisement (`ma`). Default 1h (RFC 7838's default
+     * is 24h; shorter while experimental); 1s to 30d.
+     */
+    advertise_max_age?: RdockDuration;
+    /**
+     * The UDP port to advertise when it differs from the listener's (a port mapping such as
+     * public 443 to container 8443). Default: the listener's port.
+     */
+    advertise_port?: number | null;
+    /**
+     * The IPv6 prefix length that counts as one client for `max_connections_per_client`.
+     * Default 64 (one subscriber's network, RFC 6177); 32 to 128.
+     */
+    client_ipv6_prefix?: number;
+    /**
+     * Congestion controller. Default `cubic`.
+     */
+    congestion?: RdockHttp3Congestion;
+    /**
+     * HTTP/3 datagrams (RFC 9297). Not supported (planned).
+     */
+    datagrams?: boolean;
+    /**
+     * Accept 0-RTT early data. Not supported (planned): early data can be replayed.
+     */
+    early_data?: boolean;
+    /**
+     * Serve HTTP/3 on the UDP port of the listener's address. Default `false`.
+     */
+    enabled?: boolean;
+    /**
+     * Extended CONNECT (RFC 9220 WebSocket over HTTP/3, RFC 9298 CONNECT-UDP). Not supported
+     * (planned).
+     */
+    extended_connect?: boolean;
+    /**
+     * UDP generic segmentation offload where the kernel supports it. Default `true`.
+     */
+    gso?: boolean;
+    /**
+     * Request streams a client may have open at once per connection
+     * (`initial_max_streams_bidi`). Default 100; 1 to 10000.
+     */
+    max_concurrent_streams?: number;
+    /**
+     * QUIC connections the listener holds at once. Default 1000; 1 to 1000000. Worst-case
+     * memory is `max_connections × (2 × receive_window + send_window)`: about 3 GiB with the
+     * defaults; validation warns above 4 GiB.
+     */
+    max_connections?: number;
+    /**
+     * QUIC connections one client holds at once. A client is one IPv4 address, or one IPv6
+     * prefix of `client_ipv6_prefix` bits. Only connections whose address is validated count.
+     * Default 100; 1 to `max_connections`.
+     */
+    max_connections_per_client?: number;
+    /**
+     * Largest request header section (`SETTINGS_MAX_FIELD_SECTION_SIZE`, counted as RFC 9114
+     * §4.2.2 does: name + value + 32 bytes per field). Default 64KiB; 1KiB to 768KiB, and at
+     * most `receive_window`.
+     */
+    max_header_size?: RdockByteSize;
+    /**
+     * Close a connection with no activity for this long (QUIC `max_idle_timeout`). Default
+     * 30s (HAProxy's); 1s to 10m.
+     */
+    max_idle?: RdockDuration;
+    /**
+     * Let clients move a connection to another address (active migration). Not supported
+     * (planned). With migration off, quinn 0.11 drops packets from a new address, so a client
+     * whose NAT rebinds loses the connection and reconnects.
+     */
+    migration?: boolean;
+    /**
+     * Write qlog traces into this directory. Not supported in this version (planned).
+     */
+    qlog?: string | null;
+    /**
+     * Data a client may send on the whole connection before rdock reads it (QUIC
+     * `initial_max_data`). rdock also holds at most this much of incomplete HEADERS and other
+     * non-DATA frames per connection. Default 1MiB; 64KiB to 64MiB.
+     */
+    receive_window?: RdockByteSize;
+    /**
+     * When to make clients prove their address with a QUIC Retry before any handshake work
+     * (RFC 9000 §8.1.2). `auto` (default) sends Retry while 100 or more connections are
+     * half-open (HAProxy's `tune.quic.retry-threshold`); `always`; `never` drops that
+     * threshold only. Whatever the setting, a client whose address is not yet validated is
+     * sent Retry instead of being refused when the listener is full, when its address already
+     * holds `max_connections_per_client` connections or handshakes, and once half-open
+     * connections reach half of `max_connections`: spoofed packets can neither lock a client
+     * out nor fill the listener.
+     */
+    retry?: RdockHttp3Retry;
+    /**
+     * Response data rdock buffers per connection for a client that has not acknowledged it
+     * yet. Default 1MiB; 64KiB to 64MiB.
+     */
+    send_window?: RdockByteSize;
+    /**
+     * Request body a client may send on one stream before rdock reads it (QUIC
+     * `initial_max_stream_data_bidi_remote`). Default 512KiB; 16KiB to 16MiB, and at most
+     * `receive_window`.
+     */
+    stream_receive_window?: RdockByteSize;
+    /**
+     * WebTransport over HTTP/3. Not supported (planned).
+     */
+    webtransport?: boolean;
+    [key: string]: unknown | boolean | RdockDuration | number | null | number | RdockHttp3Congestion | number | RdockByteSize | string | null | RdockHttp3Retry | undefined;
 };
 
 /**
  * Listener protocols.
  */
 export type RdockListenerProtocol = 'http' | 'https' | 'tcp' | 'udp';
+
+/**
+ * Socket options of a listener. Options that do not apply to the listener's transport are
+ * refused, and so are options this platform cannot set.
+ */
+export type RdockListenerSocket = {
+    /**
+     * TCP: how many connections the kernel holds that have completed their handshake and
+     * that ReverseDock has not accepted yet. Default 4096, Linux's `net.core.somaxconn`
+     * default since 5.4, which also caps it (before v0.9 it was 128).
+     */
+    backlog?: number | null;
+    /**
+     * DSCP value (0–63) of the traffic sent on accepted connections (the top six bits of
+     * IPv4's TOS byte or IPv6's traffic class).
+     */
+    dscp?: number | null;
+    /**
+     * TCP: accept TCP Fast Open with this many pending requests (`TCP_FASTOPEN`). The kernel
+     * must allow it for servers (`net.ipv4.tcp_fastopen` bit 2). Linux only; off by default.
+     */
+    fast_open?: number | null;
+    /**
+     * `IPV6_V6ONLY` for an IPv6 or all-interfaces (`:port`) address: `true` serves IPv6 only,
+     * `false` IPv6 and IPv4. Unset: the system's default (`net.ipv6.bindv6only`).
+     */
+    ipv6_only?: boolean | null;
+    /**
+     * TCP keep-alive probes on accepted connections. Unset: off, as the kernel does.
+     */
+    keepalive?: RdockTcpKeepalive | null;
+    /**
+     * `SO_RCVBUF`: the receive buffer, set before `listen` so the TCP window scale is
+     * negotiated with it. Unset: the kernel's automatic sizing.
+     */
+    receive_buffer?: RdockByteSize | null;
+    /**
+     * TCP: `SO_REUSEPORT`, so several sockets (or processes) can bind the same address and
+     * the kernel spreads connections over them. Off by default: with it, another process of
+     * the same user can bind the address unnoticed. Refused on `udp` listeners.
+     */
+    reuse_port?: boolean;
+    /**
+     * `SO_SNDBUF`: the send buffer. Unset: the kernel's automatic sizing.
+     */
+    send_buffer?: RdockByteSize | null;
+    /**
+     * TCP: `TCP_USER_TIMEOUT` on accepted connections, how long sent data may stay
+     * unacknowledged before the connection is dropped. Linux only.
+     */
+    user_timeout?: RdockDuration | null;
+    [key: string]: unknown | number | null | number | null | number | null | boolean | null | RdockTcpKeepalive | null | RdockByteSize | null | boolean | RdockByteSize | null | RdockDuration | null | undefined;
+};
 
 /**
  * Timeouts for the client side of a listener.
@@ -1908,10 +2814,32 @@ export type RdockListenerTls = {
      */
     client_auth?: RdockClientAuth | null;
     /**
+     * TLS client fingerprints (H-SEC-03): JA4, and JA3 on request, computed from each
+     * connection's ClientHello. Unset (the default), no ClientHello is read for it and
+     * `ClientFingerprint`, the `ja4` keys and the access-log fields stay empty.
+     */
+    fingerprint?: RdockTlsFingerprint | null;
+    /**
+     * `https` listeners: TLS handshakes in progress at once. While the bound is reached, new
+     * connections wait in the listen backlog instead of taking CPU from established ones.
+     * Unset: no bound (ADR-0031).
+     */
+    max_handshakes?: number | null;
+    /**
      * TLS versions and cipher suites.
      */
     policy?: RdockTlsPolicy;
-    [key: string]: unknown | Array<string> | RdockClientAuth | null | RdockTlsPolicy | undefined;
+    /**
+     * Sessions kept in memory for resumption by session ID (TLS 1.2, and TLS 1.3 when
+     * tickets are off), shared like the ticket keys. Default 256 sessions.
+     */
+    session_cache?: RdockTlsSessionCache | null;
+    /**
+     * Session tickets (stateless resumption, H-PERF-02). On by default, with keys shared by
+     * every listener of the same security class and kept across reloads and binary upgrades.
+     */
+    tickets?: RdockTlsTickets | null;
+    [key: string]: unknown | Array<string> | RdockClientAuth | null | RdockTlsFingerprint | null | number | null | RdockTlsPolicy | RdockTlsSessionCache | null | RdockTlsTickets | null | undefined;
 };
 
 /**
@@ -1919,15 +2847,48 @@ export type RdockListenerTls = {
  */
 export type RdockLoadBalancer = {
     /**
+     * `peak_ewma`: time constant of the latency average. Default 10s (Finagle's and
+     * Linkerd's `decay`).
+     */
+    decay?: RdockDuration | null;
+    /**
      * Header or cookie name for `header_hash` and `cookie_hash`.
      */
     hash_on?: string | null;
     /**
+     * `peak_ewma`: what a latency sample measures. Default `first_byte`.
+     */
+    measure?: RdockLatencyMeasure | null;
+    /**
      * Selection policy.
      */
     policy?: RdockLbPolicy;
-    [key: string]: unknown | string | null | RdockLbPolicy | undefined;
+    [key: string]: unknown | RdockDuration | null | string | null | RdockLatencyMeasure | null | RdockLbPolicy | undefined;
 };
+
+/**
+ * The proxy's zone and the default locality preference of services (H-HA-05, ADR-0031).
+ */
+export type RdockLocality = {
+    /**
+     * `prefer`: services use only backends of this zone while at least one of them is
+     * available, and every backend otherwise (Kubernetes `PreferSameZone`). `off` (the
+     * default, as Kubernetes distributes traffic evenly by default) ignores zones. A
+     * service's own `locality.mode` overrides this.
+     */
+    mode?: RdockLocalityMode;
+    /**
+     * The zone this proxy runs in, e.g. `eu-west-1a`. When omitted, the `RDOCK_ZONE`
+     * environment variable gives it; with neither, `prefer` has no effect.
+     */
+    zone?: string | null;
+    [key: string]: unknown | RdockLocalityMode | string | null | undefined;
+};
+
+/**
+ * Whether backends in the proxy's zone are preferred.
+ */
+export type RdockLocalityMode = 'off' | 'prefer';
 
 /**
  * Access log formats.
@@ -2217,8 +3178,9 @@ export type RdockMiddleware = {
      */
     key?: RdockRateLimitKey;
     /**
-     * Group → limit for consumers in that group, with `key: consumer`. The first of the
-     * consumer's groups (in its `groups` order) that has an override wins.
+     * Group → limit for consumers in that group, with `key: consumer` or `key: group`. With
+     * `consumer`, the first of the consumer's groups (in its `groups` order) that has an
+     * override wins; with `group`, the override of the primary group (the first one) applies.
      */
     overrides?: {
         [key: string]: RdockRateOverride;
@@ -2227,10 +3189,16 @@ export type RdockMiddleware = {
      * Period of `average`.
      */
     period?: RdockDuration;
+    /**
+     * `instance` (default) or `cluster`. With `cluster`, the cluster admits at most
+     * `average` requests per key in each `period` (fixed windows from the Unix epoch), within
+     * the bound of `cluster.limits`; each instance's own token bucket still shapes bursts.
+     */
+    scope?: RdockLimitScope;
     type: 'rate_limit';
     [key: string]: unknown | number | number | null | RdockLimitHeaders | RdockRateLimitKey | {
         [key: string]: RdockRateOverride;
-    } | RdockDuration | 'rate_limit' | undefined;
+    } | RdockDuration | RdockLimitScope | 'rate_limit' | undefined;
 } | {
     /**
      * Requests in flight allowed per key.
@@ -2248,8 +3216,12 @@ export type RdockMiddleware = {
      * How long a queued request waits before it gets `429`.
      */
     queue_timeout?: RdockDuration;
+    /**
+     * Only `instance`: a cluster-wide count of requests in flight is planned.
+     */
+    scope?: RdockLimitScope;
     type: 'in_flight';
-    [key: string]: unknown | number | RdockRateLimitKey | RdockDuration | 'in_flight' | undefined;
+    [key: string]: unknown | number | RdockRateLimitKey | RdockDuration | RdockLimitScope | 'in_flight' | undefined;
 } | {
     /**
      * Bytes that may be sent at once before the rate applies; defaults to `rate`.
@@ -2410,6 +3382,13 @@ export type RdockMiddleware = {
      * Where the token is read from; `Authorization: Bearer` when empty.
      */
     token?: RdockTokenSource;
+    /**
+     * Groups from `groups_claim` that count for `key: group` and for group `overrides` of
+     * `rate_limit` and `quota`, as if configured. Other token groups are kept on the
+     * consumer (metering, headers) but never share a configured group's budget or override,
+     * and a consumer with only those is counted on its own.
+     */
+    trusted_groups?: Array<string>;
     type: 'jwt';
     /**
      * With `consumer_claim: email`: accept an `email` claim that comes without
@@ -2420,23 +3399,59 @@ export type RdockMiddleware = {
     unverified_emails?: boolean;
     [key: string]: unknown | Array<RdockJwtAlgorithm> | Array<string> | {
         [key: string]: string;
-    } | string | null | boolean | string | null | string | null | string | string | null | RdockHttpUrl | null | RdockDuration | RdockTokenSource | 'jwt' | undefined;
+    } | string | null | boolean | string | null | string | null | string | string | null | RdockHttpUrl | null | RdockDuration | RdockTokenSource | Array<string> | 'jwt' | undefined;
 } | {
     /**
      * Names a certificate must have one of: its common name or a DNS, URI or email SAN.
      * `*` matches any run of characters, e.g. `*.clients.example.com`. Any name when empty.
+     * The typed lists below check one field each and are safer: a URI pattern there cannot
+     * be satisfied by a common name that carries the same text.
      */
     allow?: Array<string>;
+    /**
+     * DNS SANs, one must match (`*` globs).
+     */
+    dns?: Array<string>;
+    /**
+     * Email SANs, one must match (`*` globs).
+     */
+    emails?: Array<string>;
     /**
      * Headers that pass the identity to the backend.
      */
     forward?: RdockClientCertForward;
     /**
+     * Subject organizations (O), one must match (`*` globs).
+     */
+    organizations?: Array<string>;
+    /**
      * Answer `403` to requests without a verified client certificate.
      */
     required?: boolean;
+    /**
+     * Certificate serial numbers in hex (`0a1b…`, colons allowed), exact.
+     */
+    serials?: Array<string>;
+    /**
+     * SHA-256 fingerprints of the certificate in hex (colons allowed), exact: pins.
+     */
+    sha256?: Array<string>;
+    /**
+     * SPIFFE X.509-SVID rules (H-SEC-05): the certificate must be a valid SVID of one of the
+     * trust domains, and its ID one of `ids` or under one of `id_prefixes`.
+     */
+    spiffe?: RdockSpiffeRules | null;
+    /**
+     * Subject common names, one must match (`*` globs). Every typed list that is set must
+     * match, together with `allow`.
+     */
+    subjects?: Array<string>;
     type: 'client_cert';
-    [key: string]: unknown | Array<string> | RdockClientCertForward | boolean | 'client_cert' | undefined;
+    /**
+     * URI SANs, one must match (`*` globs).
+     */
+    uris?: Array<string>;
+    [key: string]: unknown | Array<string> | Array<string> | Array<string> | RdockClientCertForward | Array<string> | boolean | Array<string> | Array<string> | RdockSpiffeRules | null | Array<string> | 'client_cert' | Array<string> | undefined;
 } | {
     type: 'grpc_web';
     [key: string]: unknown | 'grpc_web';
@@ -2922,8 +3937,9 @@ export type RdockMiddleware = {
      */
     headers?: RdockLimitHeaders;
     /**
-     * What to count by; only `consumer` (the default) is accepted. Requests without a
-     * consumer are counted per client IP.
+     * What to count by: `consumer` (the default) or `group` (the consumer's primary group,
+     * the first of its `groups`: all consumers of a group share one count). Requests without
+     * a consumer are counted per client IP.
      */
     key?: RdockRateLimitKey;
     /**
@@ -2931,12 +3947,17 @@ export type RdockMiddleware = {
      */
     limit: number;
     /**
-     * Group → limit, for consumers in that group (the first of the consumer's groups that has
-     * one wins).
+     * Group → limit, for consumers in that group (with `key: consumer`, the first of the
+     * consumer's groups that has one wins; with `key: group`, the primary group's).
      */
     overrides?: {
         [key: string]: number;
     };
+    /**
+     * `instance` (default) or `cluster`: with `cluster`, the instances of a cluster share each
+     * key's quota through `cluster.limits`, within its documented bound.
+     */
+    scope?: RdockLimitScope;
     type: 'quota';
     /**
      * The calendar window, in UTC: `hour`, `day` (from 00:00) or `month` (from the 1st).
@@ -3145,6 +4166,127 @@ export type RdockMiddleware = {
      * `deny` always answers `401`.
      */
     unauthenticated?: RdockUnauthenticated;
+} | {
+    /**
+     * What a banned key gets: `deny` (`403`, problem type `banned`, the default), `tarpit`
+     * (held for `tarpit.delay`, then denied) or `tag` (served; the access log and later
+     * middlewares see `abuse: tagged`).
+     */
+    action?: RdockAbuseAction;
+    /**
+     * How long a ban lasts. Default 10m.
+     */
+    ban?: RdockDuration;
+    /**
+     * What counts: status codes (`401`), classes (`4xx`) and `auth_failure` (an
+     * authentication middleware refused the credentials). Default `[401, 403]`.
+     */
+    events?: Array<RdockAbuseEvent>;
+    /**
+     * Client networks never counted or banned. Default the loopback networks; the
+     * `security.trusted_proxies` networks are always added, so a proxy whose clients are not
+     * resolved can never ban itself, and with it everyone behind it.
+     */
+    exempt?: Array<RdockIpNetwork>;
+    /**
+     * What to count by: `client_ip` (the default; IPv6 by /64), `consumer`, `ja4` or
+     * `header:<Name>`. Requests without a consumer or fingerprint count by client address.
+     */
+    key?: RdockAbuseKey;
+    /**
+     * Bans at once. The ban list is separate from the counters and nothing evicts a ban
+     * before it ends: when it is full, new bans are refused and counted in
+     * `rdock_abuse_bans_refused_total`. Default 10000.
+     */
+    max_bans?: number;
+    /**
+     * Keys counted at once; past it, the oldest counters are dropped. Default 100000.
+     */
+    max_keys?: number;
+    /**
+     * `action: tarpit`.
+     */
+    tarpit?: RdockTarpit;
+    /**
+     * Events within one `window` that start a ban. Default 20.
+     */
+    threshold?: number;
+    type: 'abuse';
+    /**
+     * The counting window. Default 1m.
+     */
+    window?: RdockDuration;
+    [key: string]: unknown | RdockAbuseAction | RdockDuration | Array<RdockAbuseEvent> | Array<RdockIpNetwork> | RdockAbuseKey | number | RdockTarpit | 'abuse' | undefined;
+} | {
+    /**
+     * `aimd` only: the limit is multiplied by this percentage on a drop (default 90, 50–99).
+     */
+    backoff_percent?: number | null;
+    /**
+     * The limit at start and after a reload (default 20, Netflix's, kept within `min`–`max`).
+     */
+    initial?: number | null;
+    /**
+     * `gradient` only: time between two measurements of the no-load latency (default 60s,
+     * the `min_rtt_calc_params.interval` of Envoy's documented example; 1s–1h).
+     */
+    interval?: RdockDuration | null;
+    /**
+     * `gradient` only: a random part of `interval` added to it, in percent, so instances do
+     * not measure at the same moment (default 15, Envoy's `jitter`; 0–100).
+     */
+    jitter_percent?: number | null;
+    /**
+     * `aimd` only: a sample slower than this counts as a drop (default 5s, Netflix's
+     * `timeout`). Measured from admission to the response headers.
+     */
+    latency?: RdockDuration | null;
+    /**
+     * The highest limit (default 1000, Envoy's `max_concurrency_limit`).
+     */
+    max?: number;
+    /**
+     * The lowest limit (default 3, Envoy's `min_concurrency`).
+     */
+    min?: number;
+    /**
+     * `aimd` or `gradient`.
+     */
+    mode: RdockAdmissionMode;
+    /**
+     * `gradient` only: samples at `min` concurrency that make one measurement of the no-load
+     * latency (default 50, Envoy's `request_count`; 5–1000).
+     */
+    probe?: number | null;
+    /**
+     * `gradient` only: the longest a measurement pins the limit to `min` (default 5s;
+     * 100ms–60s). When it ends early, the median of the samples it has becomes the
+     * reference; without any, the previous reference stays.
+     */
+    probe_timeout?: RdockDuration | null;
+    /**
+     * `gradient` only: requests allowed above the estimate (default 4, Netflix's
+     * `queueSize`).
+     */
+    queue?: number | null;
+    /**
+     * `Retry-After` of a shed request (default 1s).
+     */
+    retry_after?: RdockDuration;
+    /**
+     * The share of the limit `normal` and `sheddable` routes may fill, in percent.
+     */
+    shares?: RdockAdmissionShares;
+    /**
+     * `gradient` only: the weight of a new estimate, in percent (default 20, 1–100).
+     */
+    smoothing_percent?: number | null;
+    /**
+     * `gradient` only: how much slower than the no-load latency a sample may be before the
+     * limit shrinks, in percent (default 150, Netflix's `rttTolerance` 1.5; 100–1000).
+     */
+    tolerance_percent?: number | null;
+    type: 'admission';
 };
 
 /**
@@ -3282,6 +4424,31 @@ export type RdockOnNonJson = 'pass' | 'reject';
 export type RdockOnPatchError = 'reject' | 'pass';
 
 /**
+ * What a GeoIP database older than `max_age` does.
+ */
+export type RdockOnStale = 'warn' | 'refuse';
+
+/**
+ * Outlier detectors (Envoy's outlier detection). Failures are those of passive health:
+ * connection errors, resets, timeouts and `statuses`.
+ */
+export type RdockOutlierDetection = {
+    /**
+     * Ejects a backend whose failures reach `threshold` percent of its requests.
+     */
+    failure_percentage?: RdockFailurePercentageDetector | null;
+    /**
+     * How often the detectors look at the counts of the last interval. Default 10s (Envoy).
+     */
+    interval?: RdockDuration;
+    /**
+     * Ejects a backend whose success rate is below `mean − stdev_factor × σ` of the others.
+     */
+    success_rate?: RdockSuccessRateDetector | null;
+    [key: string]: unknown | RdockFailurePercentageDetector | null | RdockDuration | RdockSuccessRateDetector | null | undefined;
+};
+
+/**
  * Ejection of backends that keep failing.
  */
 export type RdockPassiveHealth = {
@@ -3291,6 +4458,11 @@ export type RdockPassiveHealth = {
      */
     ejection?: RdockDuration;
     /**
+     * Up to this much is added at random to each ejection time, so backends ejected by many
+     * instances do not all return at once (Envoy's `max_ejection_time_jitter`). Default 0s.
+     */
+    ejection_jitter?: RdockDuration;
+    /**
      * Failures within `window` that eject a backend.
      */
     failures?: number;
@@ -3299,6 +4471,12 @@ export type RdockPassiveHealth = {
      */
     max_ejection_percent?: number;
     /**
+     * Statistical detectors that compare backends with each other once per interval and eject
+     * the outliers through the same ejection as `failures` (back-off, `max_ejection_percent`,
+     * trial request).
+     */
+    outlier?: RdockOutlierDetection | null;
+    /**
      * Answers that count as failures, besides connection errors, resets and timeouts.
      */
     statuses?: Array<number>;
@@ -3306,7 +4484,7 @@ export type RdockPassiveHealth = {
      * Sliding window for counting failures.
      */
     window?: RdockDuration;
-    [key: string]: unknown | RdockDuration | number | Array<number> | undefined;
+    [key: string]: unknown | RdockDuration | number | RdockOutlierDetection | null | Array<number> | undefined;
 };
 
 /**
@@ -3384,6 +4562,11 @@ export type RdockPathParameters = {
      */
     schema: unknown;
 };
+
+/**
+ * A route's class for load shedding by `admission` (H-LB-04).
+ */
+export type RdockPriorityClass = 'critical' | 'normal' | 'sheddable';
 
 /**
  * Configuration sources besides this file.
@@ -3489,6 +4672,48 @@ export type RdockRedirectPrefix = {
 export type RdockRedirectScheme = 'http' | 'https';
 
 /**
+ * A Redis-compatible server (Redis, Valkey, …) for cluster-scoped limits. rdock uses
+ * `INCRBY`, `DECRBY`, `PEXPIREAT`, `ZADD`, `ZREMRANGEBYSCORE`, `ZCARD`, `TIME` (membership is
+ * judged by the server's clock; without it, by each instance's), `AUTH`, `SELECT` and
+ * `PING`.
+ */
+export type RdockRedisStore = {
+    /**
+     * Allow `redis://` (no TLS) to an address that is not a loopback address. Off by default:
+     * the password and the counters would cross the network in clear.
+     */
+    allow_plaintext?: boolean;
+    /**
+     * CA certificates (PEM) to verify the server with instead of the system's roots.
+     */
+    ca_file?: string | null;
+    /**
+     * Prefix of every key rdock writes. Default `rdock:`.
+     */
+    key_prefix?: string;
+    /**
+     * The password. A secret: reference a file or a variable, e.g.
+     * `"${file:/run/secrets/redis}"`.
+     */
+    password?: string | null;
+    /**
+     * The longest a connection or a command may take before the store counts as away.
+     * Default 1s (100ms–10s).
+     */
+    timeout?: RdockDuration;
+    /**
+     * `rediss://host:6379/0` (TLS) or `redis://host:6379/0`; the path is the database
+     * number. Plain `redis://` is accepted for loopback addresses only, unless
+     * `allow_plaintext` is set. Credentials belong in `username` and `password`, not here.
+     */
+    url: string;
+    /**
+     * The ACL user name (Redis 6 and later); without it `AUTH` sends only the password.
+     */
+    username?: string | null;
+};
+
+/**
  * The client's request directives.
  */
 export type RdockRequestDirectives = 'honour' | 'ignore';
@@ -3522,10 +4747,18 @@ export type RdockRetries = {
      */
     on?: Array<RdockRetryOn>;
     /**
+     * Abandons an attempt that has not finished a read for this long and retries it on
+     * another backend, within the budget and only where a retry is allowed (`on` must list
+     * `timeout`). It replaces `timeouts.read` for every read of such an attempt, the wait for
+     * the response headers and each pause of the response body; the last attempt and
+     * requests that cannot be retried wait `timeouts.read`.
+     */
+    per_try_timeout?: RdockDuration | null;
+    /**
      * Also retry non-idempotent methods such as POST. Only safe if backends are idempotent.
      */
     retry_non_idempotent?: boolean;
-    [key: string]: unknown | number | Array<RdockRetryOn> | boolean | undefined;
+    [key: string]: unknown | number | Array<RdockRetryOn> | RdockDuration | null | boolean | undefined;
 };
 
 /**
@@ -3572,6 +4805,42 @@ export type RdockRfc2136Provider = {
 };
 
 /**
+ * Staged rollout of published revisions (H-HA-02, ADR-0031).
+ */
+export type RdockRollout = {
+    /**
+     * Rolling back automatically when the canary's health drops: planned, only `false` is
+     * accepted.
+     */
+    auto_rollback?: boolean;
+    /**
+     * The instance that takes each revision first. When it is offline or not set, the first
+     * online instance by name is chosen.
+     */
+    canary?: string | null;
+    /**
+     * How long the canary has to report on a revision; without a report by then the rollout
+     * halts. Default 2m (10s–1h).
+     */
+    canary_timeout?: RdockDuration;
+    /**
+     * `canary` (default) or `all`. The first revision of a cluster and rollbacks (including
+     * an abandoned rollout) always go to every instance at once.
+     */
+    mode?: RdockRolloutMode;
+    /**
+     * How long the canary serves a revision it acknowledged before the rest take it. Default
+     * 60s (0s–24h).
+     */
+    soak?: RdockDuration;
+};
+
+/**
+ * How a revision is rolled out.
+ */
+export type RdockRolloutMode = 'canary' | 'all';
+
+/**
  * An HTTP route: which requests it matches, which middlewares run, which service answers.
  */
 export type RdockRoute = {
@@ -3608,6 +4877,12 @@ export type RdockRoute = {
      */
     priority?: number;
     /**
+     * Which requests an `admission` middleware sheds first under overload: `sheddable`,
+     * then `normal` (the default), `critical` last. Unrelated to `priority`, which orders
+     * matching.
+     */
+    priority_class?: RdockPriorityClass;
+    /**
      * Service that handles matching requests (`name` or `name@provider`). Required unless the
      * last middleware answers every request itself (`static` without `pass_through`, or
      * `maintenance` enabled for everyone).
@@ -3621,7 +4896,7 @@ export type RdockRoute = {
      * TLS for this route: `auto`, `off` or detailed settings. Defaults to `defaults.tls`.
      */
     tls?: RdockRouteTls | null;
-    [key: string]: unknown | boolean | RdockErrorSettings | null | Array<string> | null | RdockMatchSpec | RdockByteSize | null | Array<string> | RdockMirror | null | number | string | null | RdockRouteTimeouts | RdockRouteTls | null | undefined;
+    [key: string]: unknown | boolean | RdockErrorSettings | null | Array<string> | null | RdockMatchSpec | RdockByteSize | null | Array<string> | RdockMirror | null | number | RdockPriorityClass | string | null | RdockRouteTimeouts | RdockRouteTls | null | undefined;
 };
 
 /**
@@ -3707,6 +4982,23 @@ export type RdockRouteTlsOptions = {
 };
 
 /**
+ * The proxy's async runtime (ADR-0031). Read at start: a change takes effect after a restart.
+ */
+export type RdockRuntimeSettings = {
+    /**
+     * Most threads for blocking work (file reads, DNS lookups by the system resolver).
+     * Unset: 512, tokio's default.
+     */
+    max_blocking_threads?: number | null;
+    /**
+     * Threads that serve connections. Unset: one per CPU the process may use, tokio's
+     * default.
+     */
+    worker_threads?: number | null;
+    [key: string]: unknown | number | null | number | null | undefined;
+};
+
+/**
  * `SameSite` cookie attribute.
  */
 export type RdockSameSite = 'lax' | 'strict' | 'none';
@@ -3714,7 +5006,7 @@ export type RdockSameSite = 'lax' | 'strict' | 'none';
 /**
  * Protocols spoken to backends.
  */
-export type RdockScheme = 'http' | 'https' | 'h2c';
+export type RdockScheme = 'http' | 'https' | 'h2c' | 'h3';
 
 /**
  * External secret stores.
@@ -3756,13 +5048,31 @@ export type RdockService = {
      */
     backends?: Array<RdockBackend>;
     /**
+     * How traffic moves between backend `priority` tiers. `strict` (the default): a tier gets
+     * traffic only when every tier above it has no available backend. `spill`: a tier keeps
+     * `healthy share × overprovisioning` of the traffic (at most all of it) and the rest goes
+     * to the next tier, as Envoy's priority levels do.
+     */
+    failover?: RdockFailover;
+    /**
      * Active and passive health checks.
      */
     health?: RdockHealth | null;
     /**
+     * Hedged requests: a second attempt while the first is still waiting. Planned, not
+     * supported: Pingora 0.9 cannot race two upstream attempts of one request. Use
+     * `retries.per_try_timeout` for stalled attempts.
+     */
+    hedge?: RdockHedge | null;
+    /**
      * How a backend is chosen for each request.
      */
     load_balancer?: RdockLoadBalancer;
+    /**
+     * Prefer backends in the proxy's own zone (`locality` at the top level sets the zone).
+     * Omitted, the top-level `locality.mode` applies.
+     */
+    locality?: RdockServiceLocality | null;
     /**
      * Requests in flight to one backend; a backend at the limit gets no more until one ends.
      */
@@ -3771,6 +5081,12 @@ export type RdockService = {
      * Requests in flight across the pool; more are answered `503` (circuit breaker).
      */
     max_requests?: number | null;
+    /**
+     * With `failover: spill`: how much more than its share each tier can carry. Default 1.4
+     * (Envoy's `overprovisioning_factor`): a tier keeps all traffic until fewer than about
+     * 71 % of its backends are available.
+     */
+    overprovisioning?: RdockFactor | null;
     /**
      * Forward the client's `Host` header (otherwise the backend address is used).
      */
@@ -3807,7 +5123,18 @@ export type RdockService = {
      * TLS to the backends when `scheme` is `https`.
      */
     tls?: RdockUpstreamTls | null;
-    [key: string]: unknown | Array<RdockBackend> | RdockHealth | null | RdockLoadBalancer | number | null | number | null | boolean | RdockRespond | null | RdockRetries | null | RdockScheme | Array<RdockSplitTarget> | RdockSticky | null | RdockTimeouts | RdockUpstreamTls | null | undefined;
+    [key: string]: unknown | Array<RdockBackend> | RdockFailover | RdockHealth | null | RdockHedge | null | RdockLoadBalancer | RdockServiceLocality | null | number | null | number | null | RdockFactor | null | boolean | RdockRespond | null | RdockRetries | null | RdockScheme | Array<RdockSplitTarget> | RdockSticky | null | RdockTimeouts | RdockUpstreamTls | null | undefined;
+};
+
+/**
+ * The locality preference of one service.
+ */
+export type RdockServiceLocality = {
+    /**
+     * `prefer` or `off`.
+     */
+    mode: RdockLocalityMode;
+    [key: string]: unknown | RdockLocalityMode;
 };
 
 /**
@@ -3821,9 +5148,76 @@ export type RdockSessionLimit = number | 'unlimited';
 export type RdockSetCookie = 'refuse' | 'strip';
 
 /**
+ * Time to full weight, such as `30s`, or every setting.
+ */
+export type RdockSlowStart = RdockDuration | RdockSlowStartConfig;
+
+/**
+ * Slow start, every setting (Envoy's `SlowStartConfig`): the weight is
+ * `weight × max(min_weight_percent / 100, (elapsed / window)^(1 / aggression))`.
+ */
+export type RdockSlowStartConfig = {
+    /**
+     * Shape of the ramp: 1.0 (the default) is linear; above 1 ramps faster at first.
+     */
+    aggression?: RdockFactor;
+    /**
+     * The weight starts at this share, in percent. Default 10 (Envoy).
+     */
+    min_weight_percent?: number;
+    /**
+     * When a backend ramps: `recovery` (after failed probes or an ejection; the default) and
+     * `join` (a backend that newly appears in a pool that already had a backend at full
+     * weight; never at start-up or into an empty pool).
+     */
+    on?: Array<RdockSlowStartOn>;
+    /**
+     * Time to full weight.
+     */
+    window?: RdockDuration;
+    [key: string]: unknown | RdockFactor | number | Array<RdockSlowStartOn> | RdockDuration | undefined;
+};
+
+/**
+ * When a backend's weight ramps up.
+ */
+export type RdockSlowStartOn = 'recovery' | 'join';
+
+/**
  * How the SMTP connection is protected.
  */
 export type RdockSmtpTls = 'starttls' | 'implicit' | 'none';
+
+/**
+ * SPIFFE X.509-SVID checks on a client certificate (SPIFFE standards `X509-SVID.md` and
+ * `SPIFFE-ID.md`, commit 5d15e3ee of github.com/spiffe/spiffe, 2026-11-13): exactly one URI
+ * SAN, scheme `spiffe`, a valid trust domain and a non-root path, a leaf that is not a CA and
+ * may not sign certificates or CRLs. The chain itself is verified by the listener's
+ * `client_auth`, whose CA bundle must be the trust domain's.
+ */
+export type RdockSpiffeRules = {
+    /**
+     * Make the SPIFFE ID the request's consumer (for `rate_limit` and `quota` by consumer,
+     * metering and the access log). Its issuer is `spiffe://<trust domain>`, so it never
+     * shares counters with an API-key or token consumer of the same name. Off by default.
+     */
+    consumer?: boolean;
+    /**
+     * SPIFFE ID prefixes, matched segment by segment: `spiffe://prod.example.com/ns/web`
+     * accepts that ID and every ID below it, never `/ns/webshop`. With neither `ids` nor
+     * `id_prefixes`, any ID of the trust domains is accepted.
+     */
+    id_prefixes?: Array<string>;
+    /**
+     * SPIFFE IDs accepted exactly, e.g. `spiffe://prod.example.com/ns/web/sa/api`.
+     */
+    ids?: Array<string>;
+    /**
+     * Trust domains accepted, e.g. `prod.example.com`. Required.
+     */
+    trust_domains?: Array<string>;
+    [key: string]: unknown | boolean | Array<string> | Array<string> | Array<string> | undefined;
+};
 
 /**
  * One target of a weighted split.
@@ -3956,6 +5350,30 @@ export type RdockStructuredMatch = {
 };
 
 /**
+ * The success-rate detector, with Envoy's defaults.
+ */
+export type RdockSuccessRateDetector = {
+    /**
+     * Turns the detector on. Default `false`.
+     */
+    enabled?: boolean;
+    /**
+     * Backends with enough requests needed before anything is evaluated. Default 5; at
+     * least 3.
+     */
+    minimum_hosts?: number;
+    /**
+     * Requests in the interval for a backend to count. Default 100.
+     */
+    request_volume?: number;
+    /**
+     * Multiplier of the standard deviation. Default 1.9 (Envoy's 1900 / 1000).
+     */
+    stdev_factor?: RdockFactor;
+    [key: string]: unknown | boolean | number | RdockFactor | undefined;
+};
+
+/**
  * How Swarm services are reached.
  */
 export type RdockSwarmEndpointMode = 'tasks' | 'vip';
@@ -4008,6 +5426,43 @@ export type RdockSymlinkPolicy = 'none' | 'within_root' | 'all';
  * How syslog messages travel.
  */
 export type RdockSyslogTransport = 'udp' | 'tcp' | 'tls';
+
+/**
+ * How `action: tarpit` holds requests.
+ */
+export type RdockTarpit = {
+    /**
+     * How long a request is held before the `403`. Default 5s, at most 60s.
+     */
+    delay?: RdockDuration;
+    /**
+     * Requests held at once, all keys together; past it, banned requests are denied at once
+     * (holding connections costs the proxy too: HAProxy's manual warns that a tarpit "can
+     * make things worse"). Default 100.
+     */
+    max_held?: number;
+    [key: string]: unknown | RdockDuration | number | undefined;
+};
+
+/**
+ * TCP keep-alive on accepted connections (`SO_KEEPALIVE`). Unset values keep the kernel's
+ * (Linux: 7200 s idle, 75 s between probes, 9 probes).
+ */
+export type RdockTcpKeepalive = {
+    /**
+     * Unanswered probes before the connection is dropped (`TCP_KEEPCNT`).
+     */
+    count?: number | null;
+    /**
+     * Idle time before the first probe (`TCP_KEEPIDLE`).
+     */
+    idle?: RdockDuration | null;
+    /**
+     * Time between probes (`TCP_KEEPINTVL`).
+     */
+    interval?: RdockDuration | null;
+    [key: string]: unknown | number | null | RdockDuration | null | RdockDuration | null | undefined;
+};
 
 /**
  * A TCP route.
@@ -4094,6 +5549,113 @@ export type RdockTcpTimeouts = {
 };
 
 /**
+ * One tenant.
+ */
+export type RdockTenant = {
+    /**
+     * Let the tenant's routes use `priority_class: critical` with an `admission` middleware
+     * it does not own (a shared one). Off: critical traffic on a shared limit is the
+     * administrator's to define.
+     */
+    allow_critical?: boolean;
+    /**
+     * Networks the tenant's backends may connect to. Empty: globally routable unicast
+     * addresses only (no loopback, link-local, private, unique-local, shared, multicast,
+     * documentation, reserved or cloud metadata address), checked on IP literals at
+     * validation and on every address a DNS name or SRV record resolves to, each time it
+     * resolves. Set: exactly these networks (a cloud metadata address only when listed on
+     * its own), and backends must be IP literals.
+     */
+    backend_networks?: Array<RdockIpNetwork>;
+    /**
+     * Planned: certificates the tenant owns.
+     */
+    certificates?: Array<string>;
+    /**
+     * Planned: a dashboard view limited to the tenant.
+     */
+    dashboard?: boolean;
+    /**
+     * The host names the tenant's routes may match: `shop.example.com` or
+     * `*.shop.example.com` (any name below it, not the name itself). Claims of two tenants
+     * may not overlap.
+     */
+    hosts?: Array<string>;
+    /**
+     * Ceilings on what the tenant's objects may hold, so one tenant cannot use up what
+     * tenants share (disk, the ACME account's rate limits).
+     */
+    limits?: RdockTenantLimits;
+    /**
+     * Planned: listeners the tenant owns.
+     */
+    listeners?: Array<string>;
+    /**
+     * Planned: a `tenant` label on the core metrics.
+     */
+    metrics_label?: boolean;
+    /**
+     * The start of the names of the tenant's objects in the admin API (routes, services,
+     * middlewares). Defaults to `<tenant>-`. No tenant's prefix may start another's.
+     */
+    prefix?: string | null;
+    /**
+     * Objects outside the prefix that the tenant's objects may reference (`name` for the
+     * configuration file's, `name@provider` for a provider's).
+     */
+    shared?: RdockTenantShared;
+};
+
+/**
+ * Ceilings on a tenant's objects. The defaults are small on purpose; an administrator raises
+ * them per tenant.
+ */
+export type RdockTenantLimits = {
+    /**
+     * The largest request body a tenant route accepts, and the most its `hold_body`,
+     * `transform` and `validate` middlewares may hold (default 16MiB). A tenant route without
+     * `max_body` gets this one, or `security.limits.max_body_bytes` when that is smaller.
+     */
+    max_body?: RdockByteSize;
+    /**
+     * Middlewares the tenant may have (default 100).
+     */
+    max_middlewares?: number;
+    /**
+     * Routes the tenant may have (default 100).
+     */
+    max_routes?: number;
+    /**
+     * Services the tenant may have (default 100).
+     */
+    max_services?: number;
+    /**
+     * Distinct host names the tenant's routes may get automatic certificates for (default
+     * 20): each one is an order on the ACME account every tenant shares, and Let's Encrypt
+     * limits certificates per registered domain and orders per account.
+     */
+    max_tls_names?: number;
+};
+
+/**
+ * Objects outside a tenant's prefix that its objects may reference.
+ */
+export type RdockTenantShared = {
+    /**
+     * Cache stores (`caches`), for `cache` middlewares.
+     */
+    caches?: Array<string>;
+    /**
+     * Middlewares.
+     */
+    middlewares?: Array<string>;
+    /**
+     * Services.
+     */
+    services?: Array<string>;
+};
+
+/**
  * Upstream timeouts.
  */
 export type RdockTimeouts = {
@@ -4123,6 +5685,33 @@ export type RdockTimeouts = {
 };
 
 /**
+ * Which TLS client fingerprints an `https` listener computes, and whether backends see them.
+ * The values are computed from the outer ClientHello (with Encrypted Client Hello the inner
+ * one is never seen), only for connections this listener terminates.
+ */
+export type RdockTlsFingerprint = {
+    /**
+     * A request header that carries the JA4 value to the backend, e.g. `X-JA4`. A copy sent
+     * by the client is always removed. Unset (the default): backends do not see it.
+     */
+    header?: string | null;
+    /**
+     * JA3 (Salesforce, an MD5 of the ClientHello). Off by default: legacy, since Chrome 110
+     * randomises the extension order that JA3 hashes, one browser has many JA3 values.
+     */
+    ja3?: boolean;
+    /**
+     * A request header that carries the JA3 value (needs `ja3: true`).
+     */
+    ja3_header?: string | null;
+    /**
+     * JA4 (FoxIO, BSD 3-Clause). Default on when `fingerprint` is set.
+     */
+    ja4?: boolean;
+    [key: string]: unknown | string | null | boolean | string | null | undefined;
+};
+
+/**
  * `auto` issues certificates automatically; `off` serves the route without TLS.
  */
 export type RdockTlsMode = 'auto' | 'off';
@@ -4131,6 +5720,47 @@ export type RdockTlsMode = 'auto' | 'off';
  * TLS policies.
  */
 export type RdockTlsPolicy = 'modern' | 'intermediate';
+
+/**
+ * The in-memory session cache of a TLS listener.
+ */
+export type RdockTlsSessionCache = {
+    /**
+     * Sessions kept (0 turns the cache off). Default 256, rustls's default.
+     */
+    size?: number;
+    [key: string]: unknown | number | undefined;
+};
+
+/**
+ * TLS session tickets. A ticket lets a returning client skip the full handshake. Listeners
+ * share ticket keys only when their TLS policy, client authentication (mode and CA
+ * certificates), certificate scope and these settings are equal, so a session from a listener
+ * without client authentication can never be resumed on one that requires it. 0-RTT (early
+ * data) is never accepted.
+ */
+export type RdockTlsTickets = {
+    /**
+     * Issue and accept tickets.
+     */
+    enabled?: boolean;
+    /**
+     * Keys you provide, to share tickets between instances: one or more 32-byte keys in base64,
+     * one per line (`openssl rand -base64 32`), the first current, the others still accepted.
+     * The file must not be readable by the group or others, is read again when it changes, and
+     * rotating it is then your job (a warning when it is older than 24 hours). Without it, keys
+     * are generated, live in memory only and are handed to the next process in a binary
+     * upgrade.
+     */
+    key_file?: string | null;
+    /**
+     * How often a new ticket key is made; the previous key still decrypts for one more
+     * interval, so tickets live at most twice this (announced to clients, capped at 7 days by
+     * RFC 8446 §4.6.1). Default 6h, rustls's own default; at most 84h.
+     */
+    rotate?: RdockDuration;
+    [key: string]: unknown | boolean | string | null | RdockDuration | undefined;
+};
 
 /**
  * Token endpoint client authentication (OpenID Connect Core §9).
@@ -4411,6 +6041,40 @@ export type RdockUnauthenticated = 'auto' | 'redirect' | 'deny';
 export type RdockUnknownOperations = 'deny' | 'allow';
 
 /**
+ * In-place binary upgrades (H-PERF-04, ADR-0031): `rdock upgrade` on the admin Unix socket or
+ * `SIGUSR2` hands the listeners to a new process, which serves once it is ready; this one
+ * drains and exits. Linux only; refused when rdock is PID 1 (replace the container instead).
+ */
+export type RdockUpgrade = {
+    /**
+     * The binary `SIGUSR2` and `rdock upgrade` without `--binary` run. Default
+     * `/usr/local/bin/rdock`, where the systemd unit and the release image install it. It
+     * must be a regular file owned by root or rdock's user and not writable by the group or
+     * others, in a directory with the same owners that the group and others cannot write to
+     * (unless it is sticky, like /tmp).
+     */
+    binary?: string;
+    /**
+     * How long the old process may still serve its open connections (HTTP/1 keep-alive is
+     * switched off and HTTP/2 clients get GOAWAY at once); the rest are closed then. Default
+     * 10m (Envoy's drain time); `unlimited` waits for every connection, which keeps an old,
+     * possibly vulnerable binary serving for as long as a client holds a connection.
+     */
+    drain?: RdockDrainLimit;
+    /**
+     * How long the new process may take to report that it is ready, and then that it serves;
+     * otherwise the old process resumes and the upgrade fails. Default 30s.
+     */
+    start_timeout?: RdockDuration;
+    /**
+     * minisign public keys (`RWQ…`); when set, `<binary>.minisig` must be a valid signature of
+     * the binary by one of them.
+     */
+    trusted_keys?: Array<string>;
+    [key: string]: unknown | string | RdockDrainLimit | RdockDuration | Array<string> | undefined;
+};
+
+/**
  * TLS to backends.
  */
 export type RdockUpstreamTls = {
@@ -4559,6 +6223,92 @@ export type OpenapiDocumentResponses = {
 };
 
 export type OpenapiDocumentResponse = OpenapiDocumentResponses[keyof OpenapiDocumentResponses];
+
+export type ListBansData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/abuse/bans';
+};
+
+export type ListBansErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type ListBansError = ListBansErrors[keyof ListBansErrors];
+
+export type ListBansResponses = {
+    /**
+     * `bans`: middleware, key, since and until (RFC 3339), remaining_seconds
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type ListBansResponse = ListBansResponses[keyof ListBansResponses];
+
+export type RemoveBanData = {
+    body?: never;
+    path: {
+        /**
+         * The banned key, URL-encoded
+         */
+        key: string;
+    };
+    query?: {
+        /**
+         * Only this `abuse` middleware's ban; every middleware's when omitted.
+         */
+        middleware?: string;
+    };
+    url: '/api/v1/abuse/bans/{key}';
+};
+
+export type RemoveBanErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * No such ban
+     */
+    404: {
+        [key: string]: unknown;
+    };
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type RemoveBanError = RemoveBanErrors[keyof RemoveBanErrors];
+
+export type RemoveBanResponses = {
+    /**
+     * `removed`: how many bans were lifted
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type RemoveBanResponse = RemoveBanResponses[keyof RemoveBanResponses];
 
 export type AuditData = {
     body?: never;
@@ -5376,6 +7126,337 @@ export type RenewResponses = {
 };
 
 export type RenewResponse = RenewResponses[keyof RenewResponses];
+
+export type ListClusterInstancesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/cluster/instances';
+};
+
+export type ListClusterInstancesErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * Not a control plane
+     */
+    404: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type ListClusterInstancesError = ListClusterInstancesErrors[keyof ListClusterInstancesErrors];
+
+export type ListClusterInstancesResponses = {
+    /**
+     * The instances and the rollout
+     */
+    200: ClusterInstances;
+};
+
+export type ListClusterInstancesResponse = ListClusterInstancesResponses[keyof ListClusterInstancesResponses];
+
+export type RevokeClusterInstanceData = {
+    body?: never;
+    path: {
+        /**
+         * The instance's name
+         */
+        name: string;
+    };
+    query?: never;
+    url: '/api/v1/cluster/instances/{name}/revoke';
+};
+
+export type RevokeClusterInstanceErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * No such instance, or not a control plane
+     */
+    404: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type RevokeClusterInstanceError = RevokeClusterInstanceErrors[keyof RevokeClusterInstanceErrors];
+
+export type RevokeClusterInstanceResponses = {
+    /**
+     * `revoked`: the name
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type RevokeClusterInstanceResponse = RevokeClusterInstanceResponses[keyof RevokeClusterInstanceResponses];
+
+export type ListClusterRevisionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/cluster/revisions';
+};
+
+export type ListClusterRevisionsErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * Not a control plane
+     */
+    404: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type ListClusterRevisionsError = ListClusterRevisionsErrors[keyof ListClusterRevisionsErrors];
+
+export type ListClusterRevisionsResponses = {
+    /**
+     * Revisions and the rollout
+     */
+    200: ClusterRevisions;
+};
+
+export type ListClusterRevisionsResponse = ListClusterRevisionsResponses[keyof ListClusterRevisionsResponses];
+
+export type PublishClusterRevisionData = {
+    body: ClusterPublishRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/cluster/revisions';
+};
+
+export type PublishClusterRevisionErrors = {
+    /**
+     * Neither or both of `document` and `rollback_to`, or an unknown revision
+     */
+    400: ErrorBody;
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * Not a control plane
+     */
+    404: ErrorBody;
+    /**
+     * The document does not validate or is empty: `diagnostics`
+     */
+    422: {
+        [key: string]: unknown;
+    };
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type PublishClusterRevisionError = PublishClusterRevisionErrors[keyof PublishClusterRevisionErrors];
+
+export type PublishClusterRevisionResponses = {
+    /**
+     * `revision`, `sha256`, `published_at`, `rollback_of`, `warnings`
+     */
+    201: {
+        [key: string]: unknown;
+    };
+};
+
+export type PublishClusterRevisionResponse = PublishClusterRevisionResponses[keyof PublishClusterRevisionResponses];
+
+export type GetClusterRolloutData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/cluster/rollout';
+};
+
+export type GetClusterRolloutErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * Not a control plane
+     */
+    404: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type GetClusterRolloutError = GetClusterRolloutErrors[keyof GetClusterRolloutErrors];
+
+export type GetClusterRolloutResponses = {
+    /**
+     * The rollout
+     */
+    200: ClusterRollout;
+};
+
+export type GetClusterRolloutResponse = GetClusterRolloutResponses[keyof GetClusterRolloutResponses];
+
+export type AbandonClusterRolloutData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/cluster/rollout/abandon';
+};
+
+export type AbandonClusterRolloutErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * Not a control plane
+     */
+    404: ErrorBody;
+    /**
+     * Nothing to abandon, or no complete revision to return to
+     */
+    409: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type AbandonClusterRolloutError = AbandonClusterRolloutErrors[keyof AbandonClusterRolloutErrors];
+
+export type AbandonClusterRolloutResponses = {
+    /**
+     * The rollback: `revision`, `sha256`, `published_at`, `rollback_of`
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type AbandonClusterRolloutResponse = AbandonClusterRolloutResponses[keyof AbandonClusterRolloutResponses];
+
+export type ResumeClusterRolloutData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/cluster/rollout/resume';
+};
+
+export type ResumeClusterRolloutErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * Not a control plane
+     */
+    404: ErrorBody;
+    /**
+     * Nothing to resume (the rollout is complete)
+     */
+    409: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type ResumeClusterRolloutError = ResumeClusterRolloutErrors[keyof ResumeClusterRolloutErrors];
+
+export type ResumeClusterRolloutResponses = {
+    /**
+     * The rollout, now complete
+     */
+    200: ClusterRollout;
+};
+
+export type ResumeClusterRolloutResponse = ResumeClusterRolloutResponses[keyof ResumeClusterRolloutResponses];
+
+export type CreateJoinTokenData = {
+    body: JoinTokenRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/cluster/tokens';
+};
+
+export type CreateJoinTokenErrors = {
+    /**
+     * A lifetime out of range
+     */
+    400: ErrorBody;
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * Not a control plane
+     */
+    404: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type CreateJoinTokenError = CreateJoinTokenErrors[keyof CreateJoinTokenErrors];
+
+export type CreateJoinTokenResponses = {
+    /**
+     * `token` (shown once), `id`, `expires_at`, `ca_pin`, `cluster_id`
+     */
+    201: {
+        [key: string]: unknown;
+    };
+};
+
+export type CreateJoinTokenResponse = CreateJoinTokenResponses[keyof CreateJoinTokenResponses];
 
 export type EffectiveData = {
     body?: never;
@@ -6758,6 +8839,56 @@ export type RevokeTokenResponses = {
 };
 
 export type RevokeTokenResponse = RevokeTokenResponses[keyof RevokeTokenResponses];
+
+export type UpgradeData = {
+    /**
+     * The binary to run (optional)
+     */
+    body: UpgradeBody;
+    path?: never;
+    query?: never;
+    url: '/api/v1/upgrade';
+};
+
+export type UpgradeErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * Not over the Unix socket, or the role cannot
+     */
+    403: ErrorBody;
+    /**
+     * Refused; nothing changed
+     */
+    409: {
+        [key: string]: unknown;
+    };
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+    /**
+     * Failed and rolled back; this process serves on
+     */
+    500: {
+        [key: string]: unknown;
+    };
+};
+
+export type UpgradeError = UpgradeErrors[keyof UpgradeErrors];
+
+export type UpgradeResponses = {
+    /**
+     * The new process serves; this one drains
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type UpgradeResponse = UpgradeResponses[keyof UpgradeResponses];
 
 export type UsersData = {
     body?: never;

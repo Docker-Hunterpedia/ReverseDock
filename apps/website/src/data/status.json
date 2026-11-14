@@ -33,5 +33,124 @@
     "what": "Agents over HAProxy's SPOP (protocol: spop)",
     "value": true,
     "fixture": "middlewares:\n  waf: { type: agent, address: \"http://127.0.0.1:9000\", protocol: spop }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app, middlewares: [waf] }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "services.<name>.hedge",
+    "planned": "a later version",
+    "what": "Hedged requests (a second upstream attempt while the first runs)",
+    "value": true,
+    "fixture": "routes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n    hedge: { delay: 50ms }\n"
+  },
+  {
+    "path": "middlewares.<name>.scope",
+    "planned": "a later version",
+    "what": "A cluster-wide count of requests in flight (in_flight with scope: cluster)",
+    "value": true,
+    "fixture": "middlewares:\n  slots: { type: in_flight, amount: 10, scope: cluster }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app, middlewares: [slots] }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "control.rollout.auto_rollback",
+    "planned": "a later version",
+    "what": "Automatic rollback of a rollout on the canary's health",
+    "value": true,
+    "fixture": "control:\n  rollout: { auto_rollback: true }\n"
+  },
+  {
+    "path": "tenants.<name>.listeners",
+    "planned": "a later version",
+    "what": "Tenant-owned listeners",
+    "value": true,
+    "fixture": "tenants:\n  acme:\n    hosts: [\"acme.example.com\"]\n    listeners: [web]\n"
+  },
+  {
+    "path": "tenants.<name>.certificates",
+    "planned": "a later version",
+    "what": "Tenant-owned certificates",
+    "value": true,
+    "fixture": "tenants:\n  acme:\n    hosts: [\"acme.example.com\"]\n    certificates: [acme]\n"
+  },
+  {
+    "path": "tenants.<name>.metrics_label",
+    "planned": "a later version",
+    "what": "A tenant label on the core metrics",
+    "value": true,
+    "fixture": "tenants:\n  acme:\n    hosts: [\"acme.example.com\"]\n    metrics_label: true\n"
+  },
+  {
+    "path": "tenants.<name>.dashboard",
+    "planned": "a later version",
+    "what": "A dashboard view limited to a tenant",
+    "value": true,
+    "fixture": "tenants:\n  acme:\n    hosts: [\"acme.example.com\"]\n    dashboard: true\n"
+  },
+  {
+    "path": "listeners.<name>.http3.qlog",
+    "planned": "a later version",
+    "what": "qlog traces of HTTP/3 connections",
+    "value": true,
+    "fixture": "listeners:\n  web: { address: \":80\" }\n  websecure: { address: \":443\", tls: {}, http3: { qlog: /var/log/rdock/qlog } }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "listeners.<name>.http3.early_data",
+    "planned": "a later version",
+    "what": "0-RTT early data on HTTP/3",
+    "value": true,
+    "fixture": "listeners:\n  web: { address: \":80\" }\n  websecure: { address: \":443\", tls: {}, http3: { early_data: true } }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "listeners.<name>.http3.migration",
+    "planned": "a later version",
+    "what": "Active connection migration on HTTP/3",
+    "value": true,
+    "fixture": "listeners:\n  web: { address: \":80\" }\n  websecure: { address: \":443\", tls: {}, http3: { migration: true } }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "listeners.<name>.http3.datagrams",
+    "planned": "a later version",
+    "what": "HTTP/3 datagrams (RFC 9297)",
+    "value": true,
+    "fixture": "listeners:\n  web: { address: \":80\" }\n  websecure: { address: \":443\", tls: {}, http3: { datagrams: true } }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "listeners.<name>.http3.webtransport",
+    "planned": "a later version",
+    "what": "WebTransport over HTTP/3",
+    "value": true,
+    "fixture": "listeners:\n  web: { address: \":80\" }\n  websecure: { address: \":443\", tls: {}, http3: { webtransport: true } }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "listeners.<name>.http3.extended_connect",
+    "planned": "a later version",
+    "what": "WebSocket over HTTP/3 and CONNECT-UDP (extended CONNECT)",
+    "value": true,
+    "fixture": "listeners:\n  web: { address: \":80\" }\n  websecure: { address: \":443\", tls: {}, http3: { extended_connect: true } }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "listeners.<name>.http3.enabled",
+    "planned": "a later version",
+    "what": "PROXY protocol on the QUIC socket of an HTTP/3 listener",
+    "value": true,
+    "fixture": "listeners:\n  web: { address: \":80\" }\n  websecure: { address: \":443\", tls: {}, proxy_protocol: { trusted: [10.0.0.0/8] }, http3: { enabled: true } }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "services.<name>.scheme",
+    "planned": "a later version",
+    "what": "HTTP/3 to backends (scheme: h3)",
+    "value": true,
+    "fixture": "routes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    scheme: h3\n    backends: [{ address: \"127.0.0.1:443\" }]\n"
+  },
+  {
+    "path": "listeners.<name>.tls.max_handshakes",
+    "planned": "a later version",
+    "what": "A bound on concurrent TLS handshakes of a tcp listener (tls.max_handshakes)",
+    "value": true,
+    "fixture": "listeners:\n  raw: { address: \":5432\", protocol: tcp, tls: { max_handshakes: 8 } }\n"
+  },
+  {
+    "path": "listeners.<name>.http3.enabled",
+    "planned": "a later version",
+    "what": "TLS fingerprints of HTTP/3 connections (tls.fingerprint with http3)",
+    "value": true,
+    "fixture": "listeners:\n  web: { address: \":80\" }\n  websecure: { address: \":443\", tls: { fingerprint: {} }, http3: { enabled: true } }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
   }
 ]

@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+pub mod minisign;
+
 use ring::digest::{SHA256, digest};
 use ring::rand::{SecureRandom, SystemRandom};
 use subtle::ConstantTimeEq;
@@ -35,6 +37,13 @@ pub const ADMIN_TOKEN: Format = Format {
 pub const API_KEY: Format = Format {
     prefix: "rdk_",
     id_len: 12,
+    secret_len: 32,
+};
+
+/// Join tokens of a cluster's control plane (ADR-0031): single use, short-lived.
+pub const JOIN_TOKEN: Format = Format {
+    prefix: "rdk_join_",
+    id_len: 10,
     secret_len: 32,
 };
 

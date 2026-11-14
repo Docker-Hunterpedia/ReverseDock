@@ -184,6 +184,122 @@ schema!(Duration, "Duration", {
 });
 
 // ---------------------------------------------------------------------------------------------
+// Factor
+
+/// A non-negative decimal number with up to three decimals, such as `1.4` or `1.9`, kept
+/// exactly (in thousandths) so that configurations compare equal. Written as a number, or as a
+/// string of one (labels are strings).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct Factor(u32);
+
+impl Factor {
+    /// The largest value accepted.
+    pub const MAX: f64 = 1_000_000.0;
+
+    /// `thousandths / 1000`.
+    #[must_use]
+    pub const fn from_thousandths(thousandths: u32) -> Self {
+        Self(thousandths)
+    }
+
+    /// The value in thousandths.
+    #[must_use]
+    pub const fn thousandths(self) -> u32 {
+        self.0
+    }
+
+    /// The value.
+    #[must_use]
+    pub fn get(self) -> f64 {
+        f64::from(self.0) / 1000.0
+    }
+
+    fn parse(value: f64) -> Result<Self, ValueError> {
+        if !value.is_finite() || !(0.0..=Self::MAX).contains(&value) {
+            return Err(ValueError::new(format!(
+                "`{value}` is not a number from 0 to {}",
+                Self::MAX
+            )));
+        }
+        let thousandths = (value * 1000.0).round();
+        if (thousandths - value * 1000.0).abs() > 1e-6 {
+            return Err(ValueError::new(format!(
+                "`{value}` has more than three decimals"
+            )));
+        }
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        Ok(Self(thousandths as u32))
+    }
+}
+
+impl FromStr for Factor {
+    type Err = ValueError;
+
+    fn from_str(s: &str) -> Result<Self, ValueError> {
+        let value: f64 = s
+            .trim()
+            .parse()
+            .map_err(|_| ValueError::new(format!("`{s}` is not a number such as `1.4`")))?;
+        Self::parse(value)
+    }
+}
+
+impl fmt::Display for Factor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (whole, part) = (self.0 / 1000, self.0 % 1000);
+        if part == 0 {
+            return write!(f, "{whole}");
+        }
+        let decimals = format!("{part:03}");
+        write!(f, "{whole}.{}", decimals.trim_end_matches('0'))
+    }
+}
+
+impl Serialize for Factor {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if self.0.is_multiple_of(1000) {
+            serializer.serialize_u32(self.0 / 1000)
+        } else {
+            serializer.serialize_f64(self.get())
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Factor {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct FactorVisitor;
+        impl Visitor<'_> for FactorVisitor {
+            type Value = Factor;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a number such as `1.4`")
+            }
+            fn visit_f64<E: de::Error>(self, value: f64) -> Result<Factor, E> {
+                Factor::parse(value).map_err(E::custom)
+            }
+            fn visit_u64<E: de::Error>(self, value: u64) -> Result<Factor, E> {
+                #[allow(clippy::cast_precision_loss)]
+                Factor::parse(value as f64).map_err(E::custom)
+            }
+            fn visit_i64<E: de::Error>(self, value: i64) -> Result<Factor, E> {
+                #[allow(clippy::cast_precision_loss)]
+                Factor::parse(value as f64).map_err(E::custom)
+            }
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<Factor, E> {
+                value.parse().map_err(E::custom)
+            }
+        }
+        deserializer.deserialize_any(FactorVisitor)
+    }
+}
+
+schema!(Factor, "Factor", {
+    "type": "number",
+    "minimum": 0,
+    "description": "A number with up to three decimals, such as 1.4.",
+    "examples": [1.4]
+});
+
+// ---------------------------------------------------------------------------------------------
 // ByteSize
 
 /// A size in bytes: a plain number or a number with a unit (`32KiB`, `100MiB`, `10MB`).
@@ -473,6 +589,14 @@ impl FromStr for BackendAddress {
                 "invalid backend address `{s}`: use `host:port`, `10.0.0.5:8080`, `[::1]:8080` or `unix:///run/app.sock`"
             )));
         };
+        // `127.1`, `2130706433`, `0x7f.0.0.1`: not DNS names. The system resolver reads them
+        // as IP addresses (`inet_aton`), so they are refused for everyone rather than passed
+        // on as names that would reach an address nobody wrote down.
+        if host.parse::<std::net::IpAddr>().is_err() && crate::addresses::looks_numeric(&host) {
+            return Err(ValueError::new(format!(
+                "`{host}` in `{s}` is not a DNS name but a non-canonical IP address, which resolvers read in surprising ways: write the address in its usual form, such as `10.0.0.5:8080`"
+            )));
+        }
         match port.parse::<u16>() {
             Ok(port) if port > 0 => Ok(Self::Tcp { host, port }),
             _ => Err(ValueError::new(format!(
@@ -536,6 +660,18 @@ impl IpNetwork {
     #[must_use]
     pub fn contains(&self, ip: &IpAddr) -> bool {
         self.0.contains(ip)
+    }
+
+    /// Whether the network is exactly the one address `ip` (a /32 or /128).
+    #[must_use]
+    pub fn is_single(&self, ip: IpAddr) -> bool {
+        self.0.prefix_len() == self.0.max_prefix_len() && self.0.addr() == ip
+    }
+
+    /// Whether the network contains any address of `other`'s range or `other` any of its.
+    #[must_use]
+    pub fn overlaps(&self, other: &IpNet) -> bool {
+        self.0.contains(other) || other.contains(&self.0)
     }
 }
 
@@ -712,7 +848,7 @@ schema!(Endpoint, "Endpoint", {
 // ---------------------------------------------------------------------------------------------
 // RateLimitKey
 
-/// What a limit counts by: `client_ip`, `route`, `consumer`, `header:<Name>`,
+/// What a limit counts by: `client_ip`, `route`, `consumer`, `group`, `ja4`, `header:<Name>`,
 /// `cookie:<name>` or `claim:<name>`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum RateLimitKey {
@@ -731,6 +867,23 @@ pub enum RateLimitKey {
     /// `cloudflare_access`, `jwt` with `consumer_claim`); requests without one are counted
     /// per client IP.
     Consumer,
+    /// The *primary group* of the request's consumer: the first entry of its `groups`
+    /// (`consumers.<name>.groups`, or the group a token middleware assigns). Every consumer
+    /// whose primary group is `acme` shares one count (ADR-0031, H-LB-04). A consumer without
+    /// a group is counted on its own, like `consumer`; requests without a consumer per client
+    /// IP. Group, consumer and address counts never mix.
+    Group,
+    /// The JA4 TLS client fingerprint of the connection (needs `tls.fingerprint` on the
+    /// listener); requests without one are counted per client IP.
+    Ja4,
+}
+
+impl RateLimitKey {
+    /// Whether the key needs a consumer set by an earlier middleware (`consumer`, `group`).
+    #[must_use]
+    pub fn needs_consumer(&self) -> bool {
+        matches!(self, Self::Consumer | Self::Group)
+    }
 }
 
 impl FromStr for RateLimitKey {
@@ -741,12 +894,14 @@ impl FromStr for RateLimitKey {
             "client_ip" => Ok(Self::ClientIp),
             "route" => Ok(Self::Route),
             "consumer" => Ok(Self::Consumer),
+            "group" => Ok(Self::Group),
+            "ja4" => Ok(Self::Ja4),
             _ => match s.split_once(':') {
                 Some(("header", name)) if is_token(name) => Ok(Self::Header(name.to_owned())),
                 Some(("cookie", name)) if is_token(name) => Ok(Self::Cookie(name.to_owned())),
                 Some(("claim", name)) if is_token(name) => Ok(Self::Claim(name.to_owned())),
                 _ => Err(ValueError::new(format!(
-                    "invalid key `{s}`: use `client_ip`, `route`, `consumer`, `header:<Name>`, `cookie:<name>` or `claim:<name>`"
+                    "invalid key `{s}`: use `client_ip`, `route`, `consumer`, `group`, `ja4`, `header:<Name>`, `cookie:<name>` or `claim:<name>`"
                 ))),
             },
         }
@@ -762,22 +917,191 @@ impl fmt::Display for RateLimitKey {
             Self::Cookie(name) => write!(f, "cookie:{name}"),
             Self::Claim(name) => write!(f, "claim:{name}"),
             Self::Consumer => f.write_str("consumer"),
+            Self::Group => f.write_str("group"),
+            Self::Ja4 => f.write_str("ja4"),
         }
     }
 }
 
 string_serde!(
     RateLimitKey,
-    "`client_ip`, `route`, `consumer`, `header:<Name>`, `cookie:<name>` or `claim:<name>`"
+    "`client_ip`, `route`, `consumer`, `group`, `ja4`, `header:<Name>`, `cookie:<name>` or `claim:<name>`"
 );
 schema!(RateLimitKey, "RateLimitKey", {
     "type": "string",
-    "pattern": "^(client_ip|route|consumer|(header|cookie|claim):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$",
+    "pattern": "^(client_ip|route|consumer|group|ja4|(header|cookie|claim):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$",
     "examples": ["client_ip", "header:X-Api-Key"]
+});
+
+// ---------------------------------------------------------------------------------------------
+// Abuse keys and events (H-SEC-01)
+
+/// What an `abuse` middleware counts by.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum AbuseKey {
+    /// The client address after trusted-proxy resolution; IPv6 by its /64.
+    #[default]
+    ClientIp,
+    /// The request's consumer.
+    Consumer,
+    /// The JA4 TLS client fingerprint.
+    Ja4,
+    /// The value of a request header.
+    Header(String),
+}
+
+impl FromStr for AbuseKey {
+    type Err = ValueError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "client_ip" => Ok(Self::ClientIp),
+            "consumer" => Ok(Self::Consumer),
+            "ja4" => Ok(Self::Ja4),
+            _ => match s.strip_prefix("header:") {
+                Some(name) if is_token(name) => Ok(Self::Header(name.to_owned())),
+                _ => Err(ValueError::new(format!(
+                    "invalid key `{s}`: use `client_ip`, `consumer`, `ja4` or `header:<Name>`"
+                ))),
+            },
+        }
+    }
+}
+
+impl fmt::Display for AbuseKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ClientIp => f.write_str("client_ip"),
+            Self::Consumer => f.write_str("consumer"),
+            Self::Ja4 => f.write_str("ja4"),
+            Self::Header(name) => write!(f, "header:{name}"),
+        }
+    }
+}
+
+string_serde!(
+    AbuseKey,
+    "`client_ip`, `consumer`, `ja4` or `header:<Name>`"
+);
+schema!(AbuseKey, "AbuseKey", {
+    "type": "string",
+    "pattern": "^(client_ip|consumer|ja4|header:[A-Za-z0-9!#$%&'*+.^_`|~-]+)$",
+    "examples": ["client_ip", "ja4"]
+});
+
+/// One kind of event an `abuse` middleware counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AbuseEvent {
+    /// A response status, e.g. `401`.
+    Status(u16),
+    /// A status class, `4xx` or `5xx`.
+    Class(u16),
+    /// An authentication middleware refused the request's credentials.
+    AuthFailure,
+}
+
+impl AbuseEvent {
+    /// Whether a response with `status` counts, given whether authentication failed.
+    #[must_use]
+    pub fn counts(self, status: u16, auth_failed: bool) -> bool {
+        match self {
+            Self::Status(s) => s == status,
+            Self::Class(c) => status / 100 == c,
+            Self::AuthFailure => auth_failed,
+        }
+    }
+}
+
+impl FromStr for AbuseEvent {
+    type Err = ValueError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "auth_failure" {
+            return Ok(Self::AuthFailure);
+        }
+        if let Some(class) = s.strip_suffix("xx")
+            && let Ok(c @ 4..=5) = class.parse::<u16>()
+        {
+            return Ok(Self::Class(c));
+        }
+        match s.parse::<u16>() {
+            Ok(status @ 400..=599) => Ok(Self::Status(status)),
+            _ => Err(ValueError::new(format!(
+                "invalid event `{s}`: use a status from 400 to 599, `4xx`, `5xx` or `auth_failure`"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for AbuseEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Status(s) => write!(f, "{s}"),
+            Self::Class(c) => write!(f, "{c}xx"),
+            Self::AuthFailure => f.write_str("auth_failure"),
+        }
+    }
+}
+
+impl Serialize for AbuseEvent {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Status(s) => serializer.serialize_u16(*s),
+            other => serializer.collect_str(other),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for AbuseEvent {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Number(u64),
+            Text(String),
+        }
+        let text = match Raw::deserialize(deserializer)? {
+            Raw::Number(n) => n.to_string(),
+            Raw::Text(t) => t,
+        };
+        text.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+schema!(AbuseEvent, "AbuseEvent", {
+    "oneOf": [
+        { "type": "integer", "minimum": 400, "maximum": 599 },
+        { "type": "string", "pattern": "^([45]xx|auth_failure|[45][0-9][0-9])$" }
+    ],
+    "examples": [401, "4xx", "auth_failure"]
 });
 
 #[cfg(test)]
 mod tests {
+    use super::Factor;
+
+    #[test]
+    fn factors_are_exact_thousandths() {
+        let parse = |v: serde_json::Value| serde_json::from_value::<Factor>(v);
+        assert_eq!(parse(serde_json::json!(1.4)).unwrap().thousandths(), 1_400);
+        assert_eq!(parse(serde_json::json!(2)).unwrap().thousandths(), 2_000);
+        assert_eq!(
+            parse(serde_json::json!("1.9")).unwrap().thousandths(),
+            1_900
+        );
+        assert!(parse(serde_json::json!(1.2345)).is_err(), "four decimals");
+        assert!(parse(serde_json::json!(-1)).is_err());
+        assert_eq!(Factor::from_thousandths(1_400).to_string(), "1.4");
+        assert_eq!(Factor::from_thousandths(2_000).to_string(), "2");
+        assert_eq!(
+            serde_json::to_value(Factor::from_thousandths(1_900)).unwrap(),
+            serde_json::json!(1.9)
+        );
+        assert_eq!(
+            serde_json::to_value(Factor::from_thousandths(1_000)).unwrap(),
+            serde_json::json!(1)
+        );
+    }
     use super::*;
 
     #[test]

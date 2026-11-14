@@ -1,0 +1,37 @@
+# The configuration of the hosted soak. soak.py replaces every @NAME@ and rewrites the file on
+# each reload with a new @GENERATION@, so each reload is a real change (the `X-Soak-Generation`
+# header on `/` shows which one answers).
+listeners:
+  web: { address: "127.0.0.1:@HTTP@" }
+  websecure: { address: "127.0.0.1:@HTTPS@", tls: {} }
+defaults: { listeners: [web, websecure], tls: off, redirect_http_to_https: false }
+certificates:
+  soak: { cert_file: "@CERT@", key_file: "@KEY@" }
+caches:
+  soak: { type: memory, max_size: 64MiB }
+routes:
+  app: { match: "PathPrefix(`/`)", service: app, middlewares: [limit, stamp], tls: { certificate: soak } }
+  cached: { match: "PathPrefix(`/cached/`)", service: app, middlewares: [limit, cache], tls: { certificate: soak } }
+  stream: { match: "PathPrefix(`/stream/`)", service: app, tls: { certificate: soak } }
+services:
+  app:
+    backends: [{ address: "127.0.0.1:@B1@" }, { address: "127.0.0.1:@B2@" }]
+    load_balancer: { policy: least_requests }
+    health:
+      active: { path: /, interval: 5s, timeout: 2s, healthy: 1, unhealthy: 3 }
+      passive: { failures: 5, window: 10s, ejection: 10s }
+    retries: { attempts: 2, on: [connect, reset] }
+middlewares:
+  # Far above the load, so it never refuses a request, but every request goes through a bucket
+  # chosen by X-Client-Id (5,000 values): the bucket table is what the soak watches.
+  limit: { type: rate_limit, average: 100000, burst: 100000, period: 1s, key: "header:X-Client-Id" }
+  stamp: { type: headers, response: { set: { X-Soak-Generation: "@GENERATION@" } } }
+  cache: { type: cache, store: soak }
+observability:
+  # JSON, every request, to standard output (soak.py sends it to /dev/null: a 5-hour run would
+  # write several GB; the formatting and the write still happen).
+  access_log: { format: json }
+admin: { listener: "127.0.0.1:@ADMIN@" }
+# The old process drains for this long after an upgrade; the held WebSocket and event stream are
+# closed at its end, which soak.py checks.
+upgrade: { binary: "@BINARY@", drain: @DRAIN@, start_timeout: 60s }

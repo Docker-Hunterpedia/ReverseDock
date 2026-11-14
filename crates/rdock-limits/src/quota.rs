@@ -34,6 +34,9 @@ pub enum KeyClass {
     Token,
     /// A consumer defined in `consumers`; never overflows.
     Consumer,
+    /// A consumer group (`key: group`, `group:<name>`); groups come from the configuration,
+    /// so they never overflow.
+    Group,
 }
 
 impl KeyClass {
@@ -46,6 +49,8 @@ impl KeyClass {
             Some(Self::Anonymous)
         } else if key.starts_with('~') {
             Some(Self::Token)
+        } else if key.starts_with(GROUP_PREFIX) {
+            Some(Self::Group)
         } else {
             Some(Self::Consumer)
         }
@@ -58,6 +63,7 @@ impl KeyClass {
             Self::Anonymous => "anonymous",
             Self::Token => "token",
             Self::Consumer => "consumer",
+            Self::Group => "group",
         }
     }
 
@@ -65,7 +71,7 @@ impl KeyClass {
         match self {
             Self::Anonymous => 0,
             Self::Token => 1,
-            Self::Consumer => 2,
+            Self::Consumer | Self::Group => 2,
         }
     }
 
@@ -73,9 +79,25 @@ impl KeyClass {
         match self {
             Self::Anonymous => Some(OVERFLOW_KEY),
             Self::Token => Some(TOKEN_OVERFLOW_KEY),
-            Self::Consumer => None,
+            Self::Consumer | Self::Group => None,
         }
     }
+}
+
+/// The start of a group's counter key. A configured consumer name cannot contain `:`, so a
+/// group never shares a consumer's key.
+pub const GROUP_PREFIX: &str = "group:";
+
+/// The counter key of consumer group `name` (`key: group`).
+#[must_use]
+pub fn group_key(name: &str) -> String {
+    format!("{GROUP_PREFIX}{name}")
+}
+
+/// The group of a counter key made by [`group_key`].
+#[must_use]
+pub fn key_group(key: &str) -> Option<&str> {
+    key.strip_prefix(GROUP_PREFIX)
 }
 
 /// The counter key of a consumer: its name when `consumers` defines it (`issuer` is `None`),
@@ -95,13 +117,19 @@ pub fn consumer_key<'a>(issuer: Option<&str>, name: &'a str) -> Cow<'a, str> {
 #[must_use]
 pub fn key_consumer(key: &str) -> Option<&str> {
     match KeyClass::of(key)? {
-        KeyClass::Anonymous => None,
+        KeyClass::Anonymous | KeyClass::Group => None,
         KeyClass::Consumer => Some(key),
         KeyClass::Token => {
             let (len, rest) = key.strip_prefix('~')?.split_once(':')?;
             rest.get(len.parse::<usize>().ok()?..)
         }
     }
+}
+
+/// Whether counter `key` belongs to `name`: a consumer's own and its token users' counters,
+/// or a group's counter asked for as `group:<name>`.
+fn names(key: &str, name: &str) -> bool {
+    key_consumer(key) == Some(name) || (key_group(key).is_some() && key == name)
 }
 
 /// Seconds since the Unix epoch, from a clock tests can replace.
@@ -364,7 +392,7 @@ impl QuotaCounter {
             .lock()
             .counts
             .iter()
-            .filter(|(key, _)| key_consumer(key) == Some(name))
+            .filter(|(key, _)| names(key, name))
             .map(|(key, &(used, limit))| Usage {
                 key: key.clone(),
                 used,
@@ -382,7 +410,7 @@ impl QuotaCounter {
         let keys: Vec<String> = state
             .counts
             .keys()
-            .filter(|key| key_consumer(key) == Some(name))
+            .filter(|key| names(key, name))
             .cloned()
             .collect();
         for key in &keys {
@@ -470,6 +498,78 @@ impl QuotaCounter {
         result
     }
 
+    /// The counts now (window start, key → used), as a base for [`Self::increments_since`].
+    #[must_use]
+    pub fn snapshot(&self) -> (i64, HashMap<String, u64>) {
+        let state = self.lock();
+        (
+            state.start,
+            state
+                .counts
+                .iter()
+                .map(|(k, &(used, _))| (k.clone(), used))
+                .collect(),
+        )
+    }
+
+    /// What was counted since `base` in the same window: (key, increment, limit). Empty when
+    /// the window changed since (the new window's counts are then all increments).
+    #[must_use]
+    pub fn increments_since(
+        &self,
+        base: &(i64, HashMap<String, u64>),
+    ) -> (i64, Vec<(String, u64, u64)>) {
+        let state = self.lock();
+        let same_window = state.start == base.0;
+        let out = state
+            .counts
+            .iter()
+            .filter_map(|(key, &(used, limit))| {
+                let before = if same_window {
+                    base.1.get(key).copied().unwrap_or(0)
+                } else {
+                    0
+                };
+                (used > before).then(|| (key.clone(), used - before, limit))
+            })
+            .collect();
+        (state.start, out)
+    }
+
+    /// Adds what another process counted (binary upgrade: the old process's draining
+    /// connections) when it is for the current window.
+    pub fn add_increments(&self, start: i64, increments: &[(String, u64, u64)]) {
+        let mut state = self.lock();
+        if state.start != start {
+            return;
+        }
+        for (key, delta, limit) in increments {
+            if !state.counts.contains_key(key)
+                && let Some(class) = KeyClass::of(key)
+            {
+                state.sizes[class.index()] += 1;
+            }
+            let entry = state.counts.entry(key.clone()).or_insert((0, *limit));
+            entry.0 = entry.0.saturating_add(*delta);
+        }
+        drop(state);
+        self.dirty.store(true, Ordering::Relaxed);
+    }
+
+    /// Reads the counts from the file again, replacing those in memory, when it holds the
+    /// current window. A process that counted nothing yet calls this when it takes over from
+    /// one that wrote its counts last (binary upgrade).
+    pub fn reread(&self) {
+        let Some(file) = self.path.as_deref().and_then(read_file) else {
+            return;
+        };
+        let mut state = self.lock();
+        if file.window == self.window && file.start == state.start {
+            state.counts = file.counts;
+            state.recount();
+        }
+    }
+
     fn due(&self) -> bool {
         let every = *self
             .flush_every
@@ -494,7 +594,7 @@ fn read_file(path: &Path) -> Option<File> {
 /// (or a crash) never sees half a file. The counts name consumers (e-mail addresses after an
 /// OIDC login) and client addresses, so on Unix the directory is `0700` and the file `0600`
 /// whatever the umask (L6 of the v0.8 review), as for the audit log and ACME files.
-fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     use std::io::Write as _;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -610,7 +710,7 @@ fn warn_unwritten(name: &str, err: &io::Error) {
 
 /// A file name for a middleware name (`name@provider` included): safe characters only, plus
 /// a hash so two names never share a file.
-fn file_name(name: &str) -> String {
+pub(crate) fn file_name(name: &str) -> String {
     let safe: String = name
         .chars()
         .map(|c| {

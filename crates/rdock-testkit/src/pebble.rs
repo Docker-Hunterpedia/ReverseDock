@@ -192,6 +192,23 @@ impl Pebble {
         path
     }
 
+    /// How many certificates Pebble issued so far: its `Issued certificate serial … for order
+    /// …` log lines (Pebble has no endpoint that lists them).
+    pub fn issued_count(&self) -> usize {
+        let out = Command::new("docker")
+            .args(["logs", &self.names[1]])
+            .output()
+            .unwrap();
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        text.lines()
+            .filter(|l| l.contains("Issued certificate serial"))
+            .count()
+    }
+
     /// The root of the certificates Pebble issues, as PEM. It changes with every start.
     pub fn issuing_root(&self) -> String {
         curl(&format!("https://localhost:{}/roots/0", self.management)).unwrap()

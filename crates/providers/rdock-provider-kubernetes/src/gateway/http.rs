@@ -730,6 +730,7 @@ pub fn service_name(namespace: &str, name: &str, port: u16, scheme: Scheme) -> S
         Scheme::Http => "http",
         Scheme::Https => "https",
         Scheme::H2c => "h2c",
+        Scheme::H3 => "h3",
     };
     super::names::object_name(
         "svc",
@@ -1385,6 +1386,7 @@ fn emit(
                         matcher: MatchSpec::Rule(expr.to_string()),
                         listeners: Some(vec![internal.to_owned()]),
                         priority: precedence.priority(),
+                        priority_class: rdock_model::route::PriorityClass::Normal,
                         middlewares: middlewares.clone(),
                         service: Some(plan.service.clone()),
                         tls: Some(RouteTls::Mode(TlsMode::Off)),

@@ -165,7 +165,7 @@ async fn every_documented_operation_answers_as_documented() {
     let backend = Backend::start("openapi-backend").await;
     let port = free_port();
     let config = format!(
-        "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\ndefaults: {{ listeners: [web], tls: off }}\nroutes:\n  file: {{ match: \"Host(`file.test`)\", service: file }}\nservices:\n  file: {{ backends: [{{ address: \"{}\" }}] }}\nadmin:\n  listener: \"{{admin}}\"\n  mfa: optional\n",
+        "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\ndefaults: {{ listeners: [web], tls: off }}\nroutes:\n  file: {{ match: \"Host(`file.test`)\", service: file }}\nservices:\n  file: {{ backends: [{{ address: \"{}\" }}] }}\nadmin:\n  listener: \"{{admin}}\"\n  mfa: optional\ntenants:\n  acme: {{ hosts: [\"acme.test\"] }}\n",
         backend.addr
     );
     let rdock = Rdock::start(RDOCK, &config);
@@ -255,19 +255,33 @@ fn session_operations(rdock: &Rdock, check: &mut Checker, admin: &str) {
 fn user_and_token_operations(rdock: &Rdock, check: &mut Checker) {
     let json_type = [("Content-Type", "application/json")];
     check.call(rdock, ("GET", "/api/v1/users", "/api/v1/users"), &[], "");
-    let user = json!({ "name": "viewer1", "role": "viewer", "password": PASSWORD }).to_string();
-    check.call(
+    let user =
+        json!({ "name": "viewer1", "role": "viewer", "password": PASSWORD, "tenant": "acme" })
+            .to_string();
+    let created = check.call(
         rdock,
         ("POST", "/api/v1/users", "/api/v1/users"),
         &json_type,
         &user,
     );
-    check.call(
+    assert_eq!(created.json()["tenant"], "acme", "{}", created.body);
+    let unknown =
+        json!({ "name": "viewer2", "role": "viewer", "password": PASSWORD, "tenant": "ghost" })
+            .to_string();
+    let refused = check.call(
+        rdock,
+        ("POST", "/api/v1/users", "/api/v1/users"),
+        &json_type,
+        &unknown,
+    );
+    assert_eq!(refused.status, 422, "{}", refused.body);
+    let changed = check.call(
         rdock,
         ("PATCH", "/api/v1/users/{name}", "/api/v1/users/viewer1"),
         &json_type,
-        r#"{"disabled":true}"#,
+        r#"{"disabled":true,"tenant":null}"#,
     );
+    assert!(changed.json().get("tenant").is_none(), "{}", changed.body);
     check.call(
         rdock,
         ("DELETE", "/api/v1/users/{name}", "/api/v1/users/viewer1"),
@@ -279,8 +293,9 @@ fn user_and_token_operations(rdock: &Rdock, check: &mut Checker) {
         rdock,
         ("POST", "/api/v1/tokens", "/api/v1/tokens"),
         &json_type,
-        r#"{"name":"ci","role":"viewer","expires_in_days":30}"#,
+        r#"{"name":"ci","role":"viewer","expires_in_days":30,"tenant":"acme"}"#,
     );
+    assert_eq!(token.json()["tenant"], "acme", "{}", token.body);
     let id = token.json()["id"].as_str().unwrap_or("missing").to_owned();
     check.call(
         rdock,
@@ -370,6 +385,13 @@ fn config_operations(rdock: &Rdock, check: &mut Checker, backend: &str) {
         &[],
         "",
     );
+    // A binary that does not exist: refused (409) before anything is started.
+    check.call(
+        rdock,
+        ("POST", "/api/v1/upgrade", "/api/v1/upgrade"),
+        &[json_type],
+        r#"{"binary":"/nonexistent/rdock"}"#,
+    );
     check.call(rdock, ("GET", "/api/v1/{kind}", "/api/v1/routes"), &[], "");
     check.call(
         rdock,
@@ -396,6 +418,8 @@ fn config_operations(rdock: &Rdock, check: &mut Checker, backend: &str) {
 fn resource_operations(rdock: &Rdock, check: &mut Checker) {
     let json_type = [("Content-Type", "application/json")];
     consumer_operations(rdock, check);
+    abuse_operations(rdock, check);
+    cluster_operations(rdock, check);
     for path in [
         "/api/v1/certificates",
         "/api/v1/backends",
@@ -531,6 +555,89 @@ fn consumer_operations(rdock: &Rdock, check: &mut Checker) {
             "DELETE",
             "/api/v1/quota/{consumer}",
             "/api/v1/quota/openapi",
+        ),
+        &[],
+        "",
+    );
+}
+
+/// Abuse bans (H-SEC-01): none here, so the unban is the documented 404.
+/// The control plane's cluster API answers `404` on a data plane (it is exercised against
+/// `rdock control run` in `e2e_cluster.rs`).
+fn cluster_operations(rdock: &Rdock, check: &mut Checker) {
+    let json = [("Content-Type", "application/json")];
+    for (method, template, path, body) in [
+        (
+            "GET",
+            "/api/v1/cluster/instances",
+            "/api/v1/cluster/instances",
+            "",
+        ),
+        (
+            "POST",
+            "/api/v1/cluster/instances/{name}/revoke",
+            "/api/v1/cluster/instances/edge-1/revoke",
+            "",
+        ),
+        (
+            "POST",
+            "/api/v1/cluster/tokens",
+            "/api/v1/cluster/tokens",
+            "{}",
+        ),
+        (
+            "GET",
+            "/api/v1/cluster/revisions",
+            "/api/v1/cluster/revisions",
+            "",
+        ),
+        (
+            "POST",
+            "/api/v1/cluster/revisions",
+            "/api/v1/cluster/revisions",
+            r#"{"document":{"routes":{}}}"#,
+        ),
+        (
+            "GET",
+            "/api/v1/cluster/rollout",
+            "/api/v1/cluster/rollout",
+            "",
+        ),
+        (
+            "POST",
+            "/api/v1/cluster/rollout/resume",
+            "/api/v1/cluster/rollout/resume",
+            "",
+        ),
+        (
+            "POST",
+            "/api/v1/cluster/rollout/abandon",
+            "/api/v1/cluster/rollout/abandon",
+            "",
+        ),
+    ] {
+        let answer = check.call(rdock, (method, template, path), &json, body);
+        assert_eq!(
+            answer.status, 404,
+            "{method} {path} on a data plane: {}",
+            answer.body
+        );
+    }
+}
+
+fn abuse_operations(rdock: &Rdock, check: &mut Checker) {
+    check.call(
+        rdock,
+        ("GET", "/api/v1/abuse/bans", "/api/v1/abuse/bans"),
+        &[],
+        "",
+    );
+    check.call(
+        rdock,
+        (
+            "DELETE",
+            "/api/v1/abuse/bans/{key}",
+            "/api/v1/abuse/bans/ip%3A192.0.2.7",
         ),
         &[],
         "",

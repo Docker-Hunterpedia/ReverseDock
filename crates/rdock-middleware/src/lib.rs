@@ -12,6 +12,8 @@ use http::{HeaderName, HeaderValue};
 use pingora::http::{RequestHeader, ResponseHeader};
 use rdock_model::middleware::Middleware as Config;
 
+mod abuse;
+mod admission;
 mod agent;
 mod api_key;
 mod auth;
@@ -60,12 +62,25 @@ pub use phase::{BodyHold, BodyVerdict, Capabilities, Consumer, LogSummary, Phase
 pub use problem::ProblemKind;
 pub use static_files::FileBody;
 
+/// The TLS client fingerprints of the connection (H-SEC-03), computed by an `https` listener
+/// with `tls.fingerprint`. Absent for connections rdock does not terminate, and when the
+/// ClientHello could not be read.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ClientFingerprint {
+    /// JA4, e.g. `t13d1516h2_8daaf6152771_e5627efa2ab1`.
+    pub ja4: Option<Arc<str>>,
+    /// JA3 (MD5 hex), only when the listener asks for it.
+    pub ja3: Option<Arc<str>>,
+}
+
 /// What middlewares know about a request and share between its phases.
 ///
 /// Fields are set by the proxy (client, route, upstream) or by middlewares (user, consumer,
 /// compression…). Per-middleware data that must survive from one phase to a later one goes in
 /// the typed state slot ([`Self::state`], [`Self::set_state`]), which belongs to the middleware's
 /// position in the chain.
+// Independent flags of one request (TLS, body, HEAD, a failed authentication), not a state.
+#[allow(clippy::struct_excessive_bools)]
 pub struct Context {
     /// Resolved client IP (after trusted-proxy handling).
     pub client_ip: IpAddr,
@@ -87,8 +102,29 @@ pub struct Context {
     pub claims: Option<Arc<serde_json::Map<String, serde_json::Value>>>,
     /// The verified client certificate of the connection, if any.
     pub client_cert: Option<Arc<ClientIdentity>>,
+    /// The TLS client fingerprints of the connection, if the listener computes them.
+    pub fingerprint: Option<Arc<ClientFingerprint>>,
+    /// An authentication middleware refused the credentials the request presented (a wrong
+    /// password, an unknown or invalid key or token; not missing ones). `abuse` counts it as
+    /// `auth_failure`.
+    pub auth_failed: bool,
+    /// What an `abuse` middleware did with this request (`banned`, `tarpit`, `tagged`), for the
+    /// access log and later middlewares.
+    pub abuse: Option<&'static str>,
+    /// The SPIFFE ID of the client certificate, set by `client_cert` with `spiffe` once it
+    /// accepted it.
+    pub spiffe_id: Option<Arc<str>>,
     /// Slots taken by `in_flight`, freed when the request ends.
     pub admitted: Vec<rdock_limits::Admitted>,
+    /// The route's class for `admission` (`priority_class`), set by the proxy.
+    pub priority_class: rdock_model::route::PriorityClass,
+    /// What an `admission` middleware did with this request (`shed`), for the access log.
+    pub admission: Option<&'static str>,
+    /// What the backend did with this request, set by the proxy: nothing yet (no backend was
+    /// reached, or rdock answered itself), answered with response headers, or failed (a
+    /// connect that failed or timed out, an upstream timeout or reset). `admission` learns
+    /// only from requests that reached a backend.
+    pub backend: BackendOutcome,
     /// Response byte limit set by `bandwidth`.
     pub throttle: Option<Throttle>,
     /// The consumer the request is attributed to, set by an authenticating middleware.
@@ -109,6 +145,20 @@ pub struct Context {
     encoding: Option<rdock_model::middleware::CompressAlgorithm>,
     head_request: bool,
     cors_origin: Option<HeaderValue>,
+}
+
+/// What the backend did with a request (see [`Context::backend`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BackendOutcome {
+    /// No backend answered: none was tried yet, rdock answered itself (a middleware's
+    /// reply, a cache hit), or the client went away first.
+    #[default]
+    None,
+    /// The backend sent response headers with this status.
+    Responded(u16),
+    /// The backend failed: the connect failed or timed out, or the response did not come in
+    /// time or the connection broke before it.
+    Failed,
 }
 
 impl Context {
@@ -132,6 +182,13 @@ impl Context {
             replace_body: None,
             claims: None,
             client_cert: None,
+            fingerprint: None,
+            auth_failed: false,
+            abuse: None,
+            priority_class: rdock_model::route::PriorityClass::Normal,
+            admission: None,
+            backend: BackendOutcome::None,
+            spiffe_id: None,
             admitted: Vec::new(),
             throttle: None,
             consumer: None,
@@ -432,6 +489,13 @@ pub struct BuildEnv<'a> {
     /// The `Host` names of the routes using each middleware, by middleware name: the hosts
     /// `oidc` may build its redirect URI from.
     pub route_hosts: Arc<std::collections::HashMap<String, Vec<String>>>,
+    /// Abuse counters and bans that outlive the configuration; `None` when validating.
+    pub abuse: Option<&'a rdock_limits::abuse::AbuseRegistry>,
+    /// Budgets of cluster-scoped limits; `None` when validating (limits count per instance).
+    pub shared_limits: Option<&'a rdock_limits::shared::SharedLimits>,
+    /// The fixed networks of `security.trusted_proxies`,
+    /// which `abuse` never counts or bans.
+    pub trusted_proxies: Arc<[rdock_model::values::IpNetwork]>,
 }
 
 /// One problem found while building a middleware, at a path inside it (`name`,
@@ -533,7 +597,7 @@ pub fn build(
         Config::ForwardAuth(c) => Arc::new(forward_auth::ForwardAuth::new(c, env.client.clone())?),
         Config::IpAllow(c) => Arc::new(ip::IpFilter::allow(c)),
         Config::IpDeny(c) => Arc::new(ip::IpFilter::deny(c)),
-        Config::RateLimit(c) => Arc::new(ratelimit::RateLimit::new(name, c)),
+        Config::RateLimit(c) => Arc::new(ratelimit::RateLimit::new(name, c, env.shared_limits)),
         Config::InFlight(c) => Arc::new(limits::InFlight::new(c)),
         Config::ClientCert(c) => Arc::new(client_cert::ClientCert::new(c)),
         Config::Jwt(c) => Arc::new(jwt::Jwt::new(
@@ -570,13 +634,22 @@ pub fn build(
         Config::Validate(c) => Arc::new(validate::Validate::new(name, c, env.metrics)?),
         Config::Transform(c) => Arc::new(transform::Transform::new(name, c, env.metrics)?),
         Config::Oidc(c) => Arc::new(oidc::Oidc::new(name, c, env)?),
+        Config::Abuse(c) => Arc::new(abuse::AbuseGuard::new(name, c, env)),
+        Config::Admission(c) => Arc::new(admission::Admission::new(name, c, env.metrics)),
         Config::Quota(c) => match env.quotas {
-            Some(registry) => Arc::new(quota::Quota::new(name, c, registry, env.metrics)),
+            Some(registry) => Arc::new(quota::Quota::new(
+                name,
+                c,
+                registry,
+                env.metrics,
+                env.shared_limits,
+            )),
             None => Arc::new(quota::Quota::new(
                 name,
                 c,
                 &rdock_limits::quota::QuotaRegistry::default(),
                 env.metrics,
+                env.shared_limits,
             )),
         },
     })

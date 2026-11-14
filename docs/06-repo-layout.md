@@ -4,14 +4,14 @@
 
 ```
 reversedock/
-├── Cargo.toml                      # workspace: members = crates/*, crates/providers/*
+├── Cargo.toml                      # workspace: members = crates/*, crates/providers/*, the native plugin examples, benchmarks/perreq
 ├── Cargo.lock
 ├── rust-toolchain.toml             # pinned toolchain (1.99.1) + clippy, rustfmt; bumped by PR
 ├── deny.toml                       # cargo-deny: licenses, advisories, bans, sources
 ├── justfile                        # dev recipes: just dev | test | e2e | lint | dashboard | bench | release
 ├── .github/
 │   ├── workflows/
-│   │   ├── ci.yml                  # docs (+ actionlint), dco, pr-title, rust (fmt, clippy, nextest, doc), msrv, deny, docker; clients, dashboard; `terraform-provider` (v0.8: provider checks, CLI tests with Terraform and OpenTofu against a fake and a real rdock; not a required check); `waf-example` (v0.8: examples/waf/smoke.sh, the CRS WAF as an agent; not a required check); `openbao` (v0.8: the ignored `e2e_vault` test against OpenBao 2.7.2 in dev mode, pinned by digest, with a root token generated in the job; not a required check); `oidc-dex` (v0.8: the ignored `e2e_oidc` login test against Dex v2.46.1, pinned by digest, with a client secret and a password generated in the job; not a required check); `wasm` (v0.8: `just wasm`, clippy and the WASM tests with the experimental `wasm` feature, the example guest, MSRV with the feature; not a required check); semgrep (report only)
+│   │   ├── ci.yml                  # docs (+ actionlint), dco, pr-title, rust (fmt, clippy, nextest, doc), msrv, deny, docker; clients, dashboard; `terraform-provider` (v0.8: provider checks, CLI tests with Terraform and OpenTofu against a fake and a real rdock; not a required check); `waf-example` (v0.8: examples/waf/smoke.sh, the CRS WAF as an agent; not a required check); `openbao` (v0.8: the ignored `e2e_vault` test against OpenBao 2.7.2 in dev mode, pinned by digest, with a root token generated in the job; not a required check); `oidc-dex` (v0.8: the ignored `e2e_oidc` login test against Dex v2.46.1, pinned by digest, with a client secret and a password generated in the job; not a required check); `wasm` (v0.8: `just wasm`, clippy and the WASM tests with the experimental `wasm` feature, the example guest, MSRV with the feature; not a required check); `http3` (v0.9: `just http3`, clippy, the HTTP/3 unit and end-to-end tests and MSRV with the experimental `http3` feature, then `scripts/http3-curl.sh`, curl over HTTP/3 from a Debian image pinned by digest; not a required check); semgrep (report only)
 │   │   ├── dashboard.yml           # (M0+) pnpm lint/test/build, bundle-size budget
 │   │   ├── e2e.yml                 # (v0.1+) docker compose scenarios, Pebble ACME, toxiproxy
 │   │   ├── conformance.yml         # (v0.2+) traefik-label suite
@@ -19,25 +19,29 @@ reversedock/
 │   │   ├── cache.yml               # (v0.8) `http-cache`: the public RFC 9111 suite http-tests/cache-tests (pinned by commit, Node.js 24) against the cache at safe defaults, gated by tests/conformance/http-cache/allowlist.json; on PRs touching the cache, weekly; passed its gate 2026-11-12; not a required check (ADR-0030)
 │   │   ├── fuzz.yml                # cargo-fuzz, weekly + on parser changes (tests/fuzz)
 │   │   ├── weekly.yml              # RustSec advisories for both lockfiles; tokio canary on the newest 1.x
-│   │   ├── bench.yml               # nightly regression check: rdock vs NGINX in one job, artifacts only
+│   │   ├── bench.yml               # nightly regression check: rdock vs NGINX in one job, artifacts only; gates throughput at 0.98× NGINX's, p99, failures and CPU time per request at 2.4× NGINX's (v0.9, `benchmarks/compare.py`)
+│   │   ├── soak.yml                # (v0.9) weekly hosted soak, about 5 h 20 min on a GitHub-hosted runner (`benchmarks/soak/hosted`): a stand-in for, not the, 24-hour soak; not a required check; no full run had completed when v0.9 was written (ADR-0031)
+│   │   ├── scaling.yml             # (v0.9) hand-run CPU-scaling measurement (rdock on 1, 2 and 4 CPUs of a hosted runner; the 4-CPU row is a lower bound); gates nothing (ADR-0031)
 │   │   └── release.yml             # build → package (checksums, SBOM; also on PRs) → publish (tags: provenance, cosign, release)
 │   ├── ISSUE_TEMPLATE/             # issue forms: bug, compatibility gap, feature, design proposal, docs + config.yml
 │   ├── PULL_REQUEST_TEMPLATE.md · CODEOWNERS · dependabot.yml · release.yml (release-note categories)
 ├── crates/
-│   ├── rdock/                      # the binary (clap)
+│   ├── rdock/                      # the binary (clap); `upgrade/` (binary upgrade by handover), `datadir` (the one-process lock), `cluster`/`control` wiring (v0.9)
 │   ├── rdock-model/                # desired-state types, validation, JSON Schema
 │   ├── rdock-rules/                # Traefik-compatible rule grammar
 │   ├── rdock-config/               # loaders, merge engine, compile, snapshots, history
-│   ├── rdock-proxy/                # Pingora ProxyHttp, router, middleware runtime, L4
-│   ├── rdock-tls/                  # resolver, cert store, policies, local CA
-│   ├── rdock-acme/                 # ACME client, solvers, DNS providers, scheduler
-│   ├── rdock-balancer/             # LB policies, health, retries, breakers
+│   ├── rdock-proxy/                # Pingora ProxyHttp, router (host index, v0.9), middleware runtime, L4, listener sockets (`socket2`, v0.9), GeoIP matchers; HTTP/3 ingress (`http3` module, v0.9, experimental, ADR-0032)
+│   ├── rdock-tls/                  # resolver, cert store, policies, local CA; shared session tickets and caches per security class (v0.9)
+│   ├── rdock-acme/                 # ACME client, solvers, DNS providers, scheduler; orders under a per-name lease on a `ClusterStore`, order journal, certificate storage with `next/` and `meta.json` as the commit (v0.9)
+│   ├── rdock-balancer/             # LB policies, health, retries, breakers; `peak_ewma`, outlier detectors, slow start on join, priority tiers, locality (v0.9)
 │   ├── rdock-cache/                # HTTP cache: RFC 9111 policy, memory and disk stores, purge, on pingora-cache (ADR-0030)
 │   ├── rdock-middleware/           # built-in middlewares; the plugin adapter and `agent` (v0.8)
 │   ├── rdock-plugin-api/           # (v0.8) the only crate a native plugin depends on: Plugin trait, http-typed heads, Factory, Registry, testing harness; own 0.x version line (ADR-0030)
 │   ├── rdock-wasm/                 # (v0.8, experimental) WASM plugins: digest pin and minisign checks (always built), the wasmtime host and the WIT world `rdock:plugin/filter` behind the `wasm` feature (ADR-0030)
-│   ├── rdock-limits/               # rate/concurrency/size limits; per-consumer quotas with persisted counters (v0.8)
-│   ├── rdock-credentials/          # (v0.8) credential formats shared by admin and data plane: rdk_pat_ tokens, rdk_ API keys, SHA-256, constant-time compare (ADR-0030)
+│   ├── rdock-limits/               # rate/concurrency/size limits; per-consumer quotas with persisted counters (v0.8); leased shares for cluster-scoped limits and the adaptive limits of `admission` (v0.9)
+│   ├── rdock-credentials/          # (v0.8) credential formats shared by admin and data plane: rdk_pat_ tokens, rdk_ API keys, rdk_join_ join tokens (v0.9), SHA-256, constant-time compare (ADR-0030)
+│   ├── rdock-cluster/              # (v0.9) cluster protocol, ClusterStore (CAS, leases with fencing; memory and directory backends), data-plane agent (ADR-0031)
+│   ├── rdock-control/              # (v0.9) control plane run by `rdock control run`: cluster CA, join tokens, registry, bundle history, store server, cluster listener (ADR-0031)
 │   ├── rdock-observability/        # logs, metrics, traces, ring buffer
 │   ├── rdock-admin/                # axum API + OpenAPI + embedded dashboard
 │   ├── rdock-cloudflare/           # IP sync, DNS-01, Access JWT, Origin CA
@@ -76,15 +80,15 @@ reversedock/
 │   ├── kubernetes/                 # install.yaml (generated from the chart by scripts/render-kubernetes-manifests.sh), namespace.yaml, kustomization.yaml
 │   └── systemd/                    # rdock.service (Type=notify, DynamicUser, CAP_NET_BIND_SERVICE; no socket activation)
 ├── examples/                       # runnable scenarios: config/, kubernetes/ (Gateway, HTTPRoute, GRPCRoute, TLSRoute, Ingress, cert-manager, secrets/), secrets/ (OpenBao Agent in Compose; examples that CI does not run), plugins/ (v0.8: header-rewrite, ip-blocklist, custom-rdock, template; workspace members, `publish = false`, tested by `rust`; wasm-header, the experimental WASM guest for `wasm32-wasip2`, outside the workspace with its own lock file, built and tested by `wasm`), waf/ (v0.8: CRS WAF as a `forward` agent in Compose, `smoke.sh` run by `waf-example`)
-├── benchmarks/                     # scenarios/, configs for nginx/traefik/caddy/haproxy, run.sh, results/<version>/
+├── benchmarks/                     # scenarios/, configs for nginx/traefik/caddy/haproxy, run.sh, results/<version>/; perreq/ (v0.9: allocations, system calls and CPU time per request and the CPU-scaling mode, without Docker; a workspace member, `publish = false`), soak/hosted (v0.9: the soak without Docker, with binary upgrades), cpu-ladder.sh
 ├── tests/
 │   ├── e2e/                        # (later) Docker-based scenarios; the v0.1 e2e suites live in crates/rdock/tests
 │   ├── conformance/traefik-labels/ # compose files + expected routing tables
 │   ├── conformance/http-cache/     # (v0.8) harness for http-tests/cache-tests: rdock.yaml (the cache at safe defaults), summarize.mjs (the gate), allowlist.json (test id → reason), README
 │   ├── conformance/gateway-api/    # Gateway API v1.7.0 suite: Go module, options.yaml, run.sh (kind), check-report.py; reports are added by release PRs or a follow-up PR from a run on the release tag
-│   └── fuzz/                       # own cargo workspace: h1_framing (differential), rules_parser, config_loader, jwt_verify, clienthello, disk_cache_header, json_patch and oidc_cookie (v0.8); label parser later
+│   └── fuzz/                       # own cargo workspace: h1_framing (differential), rules_parser, config_loader, jwt_verify, clienthello, disk_cache_header, json_patch and oidc_cookie (v0.8), proxy_header (v0.6), tls_fingerprint and http3_request (v0.9); label parser later
 ├── docs/                           # these documents (the engineering plan); the public docs live in apps/website
-├── scripts/                        # xlsx2md.py, schema-export, render-kubernetes-manifests.sh, release helpers
+├── scripts/                        # xlsx2md.py, schema-export, render-kubernetes-manifests.sh, http3-curl.sh (curl over HTTP/3, `http3` CI job), release helpers
 ├── CONTRIBUTING.md · CODE_OF_CONDUCT.md · SECURITY.md · SUPPORT.md · GOVERNANCE.md
 ├── CLAUDE.md                       # rules for AI assistants (AGENTS.md is a symlink to it); .claude/ stays local
 ├── LICENSE (Apache-2.0) · NOTICE · CHANGELOG.md · README.md · .editorconfig · .gitignore
@@ -106,6 +110,7 @@ reversedock/
 | Naming | config keys `snake_case`; labels `rdock.dot.case`; CLI flags `--kebab-case`; env `RDOCK_UPPER_SNAKE`; metrics `rdock_snake_case` |
 | Dependencies | Every new dependency reviewed against `deny.toml` (allowed licenses: Apache-2.0, MIT, BSD-*, ISC, Zlib, Unicode, MPL-2.0 case-by-case) |
 | Docs | Each crate has a `README.md` and a module-level doc comment describing its place in the pipeline |
+| Cluster crates | `rdock-cluster` depends on no other `rdock-*` crate (the data plane, ACME and the control plane share it); `rdock-control` never depends on `rdock-admin` (`deny.toml`): the binary runs the admin API for the control plane through `rdock_admin::Control` |
 
 ### Cargo features (source of truth)
 
@@ -118,7 +123,10 @@ reversedock/
 | `mimalloc` | on | `rdock` (the library) sets mimalloc as the global allocator; a custom binary with native plugins turns it off to bring its own (ADR-0030) |
 | `wasm` | off, experimental | WASM plugins (`type: wasm`) on wasmtime 36 LTS with Cranelift and the component model (`rdock-wasm`; also a feature of `rdock-middleware` and `rdock-proxy`); about 50 more crates. Without it `type: wasm` is refused with a diagnostic. Tested only in the non-required `wasm` CI job ([ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)) |
 | `cache` | none: always built | The HTTP cache (`rdock-cache`, v0.8) is in every build: `pingora-proxy` compiles `pingora-cache` anyway, so a feature would save no dependency ([ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)) |
-| `http3` | off, experimental | QUIC ingress; requires the `boringssl` backend |
+| `http3` | off, experimental | HTTP/3 ingress on `quinn` and `h3` with the listener's rustls configuration; 7 more crates on Linux (`quinn`, `quinn-proto`, `quinn-udp`, `h3`, `h3-quinn`, `lru-slab`, `rand_pcg`; `web-time` only for wasm targets; `rdock-proxy` itself uses its own adapter of h3's `quic` traits instead of `h3-quinn`, which only the test client uses); not in release binaries ([ADR-0032](decisions/0032-http3-on-quinn-and-h3.md)). Features of the same name on `rdock-proxy` and `rdock-testkit` (the HTTP/3 test client). Without it `http3.enabled: true` is refused with a diagnostic. CI: the non-required `http3` job (`just http3`, then `scripts/http3-curl.sh`) |
+| `jemalloc` | off, comparison only | `tikv-jemallocator` as the global allocator, to compare with mimalloc (v0.9, H-PERF-06, ADR-0031); never in a release build; builds on glibc, a musl build was not tried |
+| `alloc-count` | off, bench only | `rdock` counts allocations with `stats_alloc` for `benchmarks/perreq` (v0.9, ADR-0031); the system allocator instead of mimalloc; never in a release build or a CI artefact |
+| `fault-injection` | off, tests only | faults for the admin API's tests (`RDOCK_FAULT`) and the binary upgrade's (`RDOCK_UPGRADE_FAULT`, also in debug builds); a fault can only make an operation fail; never in a release build |
 | `rustls` / `openssl` / `boringssl` | `rustls` | mutually exclusive TLS backends ([ADR-0002](decisions/0002-tls-backend-rustls.md)) |
 
 `cargo build --no-default-features --features rustls` builds the minimal proxy (file provider, no dashboard). The features appear as their crates gain code; M0 has none yet.
@@ -151,7 +159,7 @@ reversedock/
 | Conformance | Traefik-label suite; Gateway API v1.7.0 suite on kind (`kubernetes.yml`; GATEWAY-HTTP, -GRPC, -TLS, -TCP passed 2026-11-11 and GATEWAY-UDP 2026-11-12, commit `43d81de`; fails the workflow, not yet a required check); RFC 9111 suite `http-tests/cache-tests` (`cache.yml`; gate passed 2026-11-12, not a required check) | `tests/conformance` | PRs touching providers; nightly |
 | Kubernetes | Translator and status tests on fixtures (`tests/gateway_conformance.rs` transcribes upstream conformance tests); runtime tests against a bare kube-apiserver when `RDOCK_TEST_KUBECONFIG` is set (not wired into CI); chart `helm lint --strict`, `helm template` + kubeconform, manifests in sync; Helm on k3s (fails the workflow; passed 2026-11-11) | `crates/providers/rdock-provider-kubernetes`, `deploy/`, `.github/workflows/kubernetes.yml` | PRs touching them; nightly |
 | Fuzz | `cargo-fuzz` (differential HTTP/1 framing vs httparse, rules parser, config loader) | `tests/fuzz` | weekly + parser PRs |
-| Load / soak | `oha`, `wrk2`, `k6`, 24 h soak | `benchmarks/` | nightly rdock-vs-NGINX regression check on a shared runner (`bench.yml`); published results from fixed hardware, committed per release |
+| Load / soak | `oha`, `wrk2`, `k6`, 24 h soak (v0.5, on the retired lab); the hosted soak with binary upgrades (v0.9, `soak.yml`, weekly, about 5 h 20 min: a stand-in for the 24-hour criterion) and the CPU-scaling mode (`scaling.yml`, by hand) | `benchmarks/` | nightly rdock-vs-NGINX regression check on a shared runner (`bench.yml`); published results from fixed hardware, committed per release |
 | Security | `cargo-audit`, `cargo-deny`, Semgrep, dependency review, Trivy on images | CI | every PR |
 | UI | Vitest, Playwright (light/dark, 400 px–1440 px, axe, no external requests) | `apps/dashboard` | every PR |
 | Website | generated-page freshness, `rdock validate --strict` on every config snippet, status badges vs `rdock`, link check, `astro check`, axe (WCAG 2.2 AA) | `apps/website` | PRs touching the site, schema, CLI or changelog |

@@ -489,7 +489,7 @@ pub(crate) async fn quotas(
         .spawn(async move { control.quotas(None).await })
         .await
     {
-        Ok(value) => axum::Json(value).into_response(),
+        Ok(value) => axum::Json(scoped_quotas(&caller, value)).into_response(),
         Err(_) => gone(),
     }
 }
@@ -510,8 +510,16 @@ pub(crate) async fn quota(
         .spawn(async move { control.quotas(Some(consumer)).await })
         .await
     {
-        Ok(value) => axum::Json(value).into_response(),
+        Ok(value) => axum::Json(scoped_quotas(&caller, value)).into_response(),
         Err(_) => gone(),
+    }
+}
+
+/// A tenant sees the counts of its own `quota` middlewares only.
+fn scoped_quotas(caller: &Caller, value: serde_json::Value) -> serde_json::Value {
+    match caller.scope() {
+        Some(scope) => crate::tenancy::by_middleware(scope, value, "quotas"),
+        None => value,
     }
 }
 
@@ -527,6 +535,19 @@ pub(crate) async fn reset_quota(
     Query(scope): Query<QuotaScope>,
 ) -> Response {
     check!(need(&caller, Access::Operator));
+    if let Some(tenant) = caller.scope()
+        && !scope
+            .middleware
+            .as_deref()
+            .is_some_and(|m| tenant.owns_merged(m))
+    {
+        return crate::caller::tenant_denied(
+            &state,
+            &caller,
+            format!("/api/v1/quota/{consumer}"),
+            "name one of the tenant's own `quota` middlewares in `?middleware=`",
+        );
+    }
     let control = state.control.clone();
     let (who, which) = (consumer.clone(), scope.middleware.clone());
     let Ok(reset) = state

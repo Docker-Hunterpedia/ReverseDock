@@ -13,12 +13,15 @@
 //! - `POST /grpc.health.v1.Health/Check`: `SERVING` or `NOT_SERVING` the same way.
 //! - `/flaky`: the JSON echo while healthy; `503` with `Retry-After: 30` otherwise.
 //! - anything else: a JSON echo of method, target, version, headers and body length.
+//!
+//! [`Backend::set_delay`] delays every answer except the health endpoints;
+//! [`Backend::fail_pattern`] answers `502` to a fixed share of those requests.
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -40,7 +43,43 @@ pub struct Backend {
     requests: Arc<AtomicUsize>,
     targets: Arc<std::sync::Mutex<Vec<String>>>,
     healthy: Arc<AtomicBool>,
+    faults: Arc<Faults>,
     task: tokio::task::JoinHandle<()>,
+}
+
+/// Delay and failures injected into answers other than the health endpoints.
+#[derive(Debug, Default)]
+struct Faults {
+    delay_ms: AtomicU64,
+    /// `fail` of every `of` requests answer 502 (the first `fail` of each `of`).
+    fail: AtomicU32,
+    of: AtomicU32,
+    count: AtomicU32,
+}
+
+impl Faults {
+    async fn apply(&self, path: &str) -> Option<Response<Body>> {
+        if path == "/healthz" || path.starts_with("/grpc.health") {
+            return None;
+        }
+        let delay = self.delay_ms.load(Ordering::SeqCst);
+        if delay > 0 {
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+        }
+        let of = self.of.load(Ordering::SeqCst);
+        if of > 0 {
+            let n = self.count.fetch_add(1, Ordering::SeqCst) % of;
+            if n < self.fail.load(Ordering::SeqCst) {
+                return Some(
+                    Response::builder()
+                        .status(502)
+                        .body(full("injected failure\n"))
+                        .unwrap(),
+                );
+            }
+        }
+        None
+    }
 }
 
 impl Drop for Backend {
@@ -136,6 +175,8 @@ impl Backend {
         let name: Arc<str> = Arc::from(name);
         let healthy = Arc::new(AtomicBool::new(true));
         let health = healthy.clone();
+        let faults: Arc<Faults> = Arc::default();
+        let injected = faults.clone();
         let task = tokio::spawn(async move {
             loop {
                 let Ok((tcp, _)) = listener.accept().await else {
@@ -145,6 +186,7 @@ impl Backend {
                 let counter = counter.clone();
                 let seen = seen.clone();
                 let health = health.clone();
+                let injected = injected.clone();
                 let tls = tls.clone();
                 tokio::spawn(async move {
                     let service = service_fn(move |req: Request<Incoming>| {
@@ -155,7 +197,18 @@ impl Backend {
                                 .map_or("/", |p| p.as_str())
                                 .to_owned(),
                         );
-                        handle(name.clone(), health.load(Ordering::SeqCst), req)
+                        let (name, healthy, injected) = (
+                            name.clone(),
+                            health.load(Ordering::SeqCst),
+                            injected.clone(),
+                        );
+                        async move {
+                            let path = req.uri().path().to_owned();
+                            if let Some(reply) = injected.apply(&path).await {
+                                return Ok::<_, Infallible>(reply);
+                            }
+                            handle(name, healthy, req).await
+                        }
                     });
                     let builder =
                         hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
@@ -181,8 +234,22 @@ impl Backend {
             requests,
             targets,
             healthy,
+            faults,
             task,
         }
+    }
+
+    /// Delays every answer except the health endpoints by `delay` (zero: no delay).
+    pub fn set_delay(&self, delay: Duration) {
+        let ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX);
+        self.faults.delay_ms.store(ms, Ordering::SeqCst);
+    }
+
+    /// Answers `502` to `fail` of every `of` requests other than health probes, in a fixed
+    /// pattern (`of: 0` stops).
+    pub fn fail_pattern(&self, fail: u32, of: u32) {
+        self.faults.fail.store(fail, Ordering::SeqCst);
+        self.faults.of.store(of, Ordering::SeqCst);
     }
 
     /// Makes the health endpoints report healthy or not.

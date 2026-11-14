@@ -90,13 +90,36 @@ pub(crate) fn parse(candidate: Value) -> Result<Fragment, String> {
     })
 }
 
-/// Whether a diagnostic says an API object was left out of the merge. Provider objects that
-/// fail are normally left out with a warning (ADR-0009); a write through the API is all or
-/// nothing instead, so the API never applies less than it was asked to.
-fn api_object_left_out(diagnostic: &Diagnostic) -> bool {
+/// The API object a "left out" diagnostic is about (`name@api`), if it is one. Provider
+/// objects that fail are normally left out with a warning (ADR-0009); a write through the API
+/// is all or nothing for what it changes, so the API never applies less than it was asked to.
+fn api_object_left_out(diagnostic: &Diagnostic) -> Option<(rdock_config::merge::Section, String)> {
     // `skipped()` in rdock-config words provider objects that fail this way.
-    diagnostic.message.starts_with("left out:")
-        && owner(&diagnostic.path).is_some_and(|(_, name)| name.ends_with(&format!("@{PROVIDER}")))
+    if !diagnostic.message.starts_with("left out:") {
+        return None;
+    }
+    owner(&diagnostic.path).filter(|(_, name)| name.ends_with(&format!("@{PROVIDER}")))
+}
+
+/// Whether the object `key` (`name@api`) of `section` differs between two API fragments, or
+/// exists in only one.
+fn changed(
+    section: rdock_config::merge::Section,
+    key: &str,
+    before: &Fragment,
+    after: &Fragment,
+) -> bool {
+    use rdock_config::merge::Section;
+    let name = key.strip_suffix(&format!("@{PROVIDER}")).unwrap_or(key);
+    let value = |fragment: &Fragment| -> Option<Value> {
+        match section {
+            Section::Routes => fragment.routes.get(name).map(|o| serde_json::json!(o)),
+            Section::Services => fragment.services.get(name).map(|o| serde_json::json!(o)),
+            Section::Middlewares => fragment.middlewares.get(name).map(|o| serde_json::json!(o)),
+            _ => None,
+        }
+    };
+    value(before) != value(after)
 }
 
 /// The outcome of a conditional write.
@@ -148,7 +171,7 @@ impl Engine {
         if if_match.trim() != self.api_etag() {
             return Write::Stale;
         }
-        let (ok, diagnostics) = self.api_dry_run(candidate.clone());
+        let (ok, diagnostics) = self.api_dry_run(&candidate);
         if !ok {
             let report = self
                 .rejected(
@@ -188,7 +211,55 @@ impl Engine {
 
     /// Validates and compiles the configuration as it would be with `candidate` as the API
     /// objects, without applying anything.
-    pub(crate) fn api_dry_run(&self, candidate: Fragment) -> (bool, Vec<Diagnostic>) {
+    ///
+    /// An API object left out of the merge is an error only when this write is to blame: the
+    /// object is new or changed, or it was in use before and the write broke it. An object the
+    /// write did not touch and that is already left out today (a tenant's route whose shared
+    /// service went away, an object a narrower tenant rule now refuses) stays a warning, so one
+    /// tenant's stale object never blocks another's writes; its owner and administrators see
+    /// the warning, other tenants never do (reports are filtered by owner).
+    pub(crate) fn api_dry_run(&self, candidate: &Fragment) -> (bool, Vec<Diagnostic>) {
+        let current = self.api_fragment();
+        let (ok, mut diagnostics) = self.api_check(candidate.clone());
+        let blamed: Vec<_> = diagnostics
+            .iter()
+            .filter_map(api_object_left_out)
+            .filter(|(section, key)| changed(*section, key, &current, candidate))
+            .collect();
+        let untouched: Vec<_> = diagnostics
+            .iter()
+            .filter_map(api_object_left_out)
+            .filter(|(section, key)| !changed(*section, key, &current, candidate))
+            .collect();
+        // Which untouched objects are left out already, without this write?
+        let already: BTreeSet<_> = if untouched.is_empty() {
+            BTreeSet::new()
+        } else {
+            self.api_check(current)
+                .1
+                .iter()
+                .filter_map(api_object_left_out)
+                .collect()
+        };
+        for d in &mut diagnostics {
+            let Some(object) = api_object_left_out(d) else {
+                continue;
+            };
+            if blamed.contains(&object) || !already.contains(&object) {
+                // A provider object is "left out"; an API object is refused with the reason.
+                d.severity = rdock_model::Severity::Error;
+                d.message = d.message.trim_start_matches("left out: ").to_owned();
+            }
+        }
+        (
+            ok && !diagnostics.iter().any(Diagnostic::is_error),
+            diagnostics,
+        )
+    }
+
+    /// The configuration's diagnostics with `candidate` as the API objects, "left out" ones as
+    /// the merge words them.
+    fn api_check(&self, candidate: Fragment) -> (bool, Vec<Diagnostic>) {
         let loaded = match &self.source {
             Source::File(path) => load_file_with_includes(path).map(|(loaded, _)| loaded),
             Source::ZeroConfig => load_str(zero_config::CONFIG, Format::Yaml),
@@ -216,17 +287,7 @@ impl Engine {
         let ok = self
             .merge_and_compile(file, &snapshots, &BTreeSet::new(), &mut diagnostics)
             .is_ok();
-        for d in &mut diagnostics {
-            if api_object_left_out(d) {
-                // A provider object is "left out"; an API object is refused with the reason.
-                d.severity = rdock_model::Severity::Error;
-                d.message = d.message.trim_start_matches("left out: ").to_owned();
-            }
-        }
-        (
-            ok && !diagnostics.iter().any(Diagnostic::is_error),
-            diagnostics,
-        )
+        (ok, diagnostics)
     }
 }
 

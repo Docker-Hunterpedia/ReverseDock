@@ -39,6 +39,11 @@ pub(crate) struct CertState {
     pub alerted_at: Option<Instant>,
     /// When an operator asked for renewal now (`POST /api/v1/certificates/{name}/renew`).
     pub renewal_requested: Option<Instant>,
+    /// The version of the stored metadata last loaded (`0`: none), to notice certificates
+    /// other instances store.
+    pub meta_version: u64,
+    /// Another instance holds the lease on this certificate: who, and when to look again.
+    pub waiting_on: Option<(String, Instant)>,
 }
 
 /// The renewal state of one certificate, as `rdock status` shows it.
@@ -76,6 +81,20 @@ impl CertState {
         self.renewal_requested = None;
     }
 
+    /// Takes the shared renewal time from stored metadata (ADR-0031).
+    pub fn adopt_meta(&mut self, meta: &crate::storage::CertMeta) {
+        if let Some(window) = meta.ari {
+            self.ari_renew_at = Some(window.renew_at);
+            self.ari_known = true;
+        }
+        self.waiting_on = None;
+    }
+
+    /// Another instance works on this certificate: look again after `recheck`.
+    pub fn wait_for(&mut self, holder: &str, recheck: Duration) {
+        self.waiting_on = Some((holder.to_owned(), Instant::now() + recheck));
+    }
+
     /// Counts a failed attempt and schedules the next one.
     pub fn fail(&mut self, error: String) {
         self.failures += 1;
@@ -93,7 +112,12 @@ impl CertState {
     }
 
     pub fn due(&self, now: i64) -> bool {
-        let waiting = self.retry_at.is_some_and(|at| at > Instant::now());
+        let now_instant = Instant::now();
+        let waiting = self.retry_at.is_some_and(|at| at > now_instant)
+            || self
+                .waiting_on
+                .as_ref()
+                .is_some_and(|(_, at)| *at > now_instant);
         !waiting && (self.renewal_requested.is_some() || self.renew_at().is_none_or(|at| now >= at))
     }
 
@@ -126,6 +150,11 @@ impl CertState {
 
     /// When this certificate next needs attention.
     pub fn wake_at(&self, now: i64) -> Instant {
+        if let Some((_, at)) = &self.waiting_on
+            && *at > Instant::now()
+        {
+            return *at;
+        }
         let renewal = self.retry_at.unwrap_or_else(|| {
             let secs = self.renew_at().map_or(0, |at| at - now);
             Instant::now() + Duration::from_secs(u64::try_from(secs).unwrap_or(0))

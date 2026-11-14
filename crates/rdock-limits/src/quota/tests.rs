@@ -279,3 +279,31 @@ fn quota_files_are_private() {
     assert_eq!(mode(&quota.join(name)), 0o600);
     assert_eq!(mode(&quota), 0o700);
 }
+
+#[test]
+fn increments_move_to_the_next_process_and_a_reread_takes_the_written_counts() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("q.json");
+    let clock = Arc::new(Fake::default());
+    clock.set(10);
+    let old = QuotaCounter::open(Window::Hour, Some(path.clone()), clock.clone());
+    old.take("consumer:a", 100);
+    old.flush().unwrap();
+    // The new process opened the counters before the old one wrote its last counts.
+    let new = QuotaCounter::open(Window::Hour, Some(path.clone()), clock.clone());
+    old.take("consumer:a", 100);
+    old.flush().unwrap();
+    let base = old.snapshot();
+    new.reread();
+    assert_eq!(new.usage("consumer:a").unwrap().used, 2);
+    // Requests the old process counted while draining reach the new one at its exit.
+    old.take("consumer:a", 100);
+    old.take("consumer:b", 100);
+    let (start, increments) = old.increments_since(&base);
+    new.add_increments(start, &increments);
+    assert_eq!(new.usage("consumer:a").unwrap().used, 3);
+    assert_eq!(new.usage("consumer:b").unwrap().used, 1);
+    // Increments of another window are dropped.
+    new.add_increments(start - 3600, &increments);
+    assert_eq!(new.usage("consumer:a").unwrap().used, 3);
+}

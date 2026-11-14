@@ -1,0 +1,69 @@
+# CPU scaling measurement (H-PERF-01, ADR-0031 step 9). Run by hand only; it gates nothing.
+#
+# rdock pinned to 1, 2 and 4 CPUs of the runner (`taskset`, `runtime.worker_threads` to match),
+# the load generator and the backend (one process, benchmarks/perreq) on the CPUs that are left.
+# On the 4-vCPU hosted runner nothing is left at 4 CPUs: the generator shares the cores with the
+# proxy, so the 4-CPU row is a LOWER BOUND, not a clean measurement. A hosted runner is also a
+# shared virtual machine whose speed varies, so the rounds' ranges matter as much as the medians.
+# 8 CPUs are not measured (no hosted runner has them). benchmarks/README.md, "CPU scaling".
+name: scaling
+
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: Rounds (each runs every size once, in alternating order)
+        default: "3"
+      seconds:
+        description: Seconds of the measured phase per run
+        default: "20"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scaling-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scaling:
+    name: scaling
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install && rustup show active-toolchain
+      - name: Build rdock and the measurement tool (release)
+        env:
+          RDOCK_BUILD_COMMIT: ${{ github.sha }}
+        run: cargo build --locked --release -p rdock -p rdock-perreq
+      - name: Measure
+        env:
+          ROUNDS: ${{ inputs.rounds }}
+          SCALE_SECONDS: ${{ inputs.seconds }}
+        run: |
+          if [[ ! "$ROUNDS" =~ ^[0-9]+$ || ! "$SCALE_SECONDS" =~ ^[0-9]+$ ]]; then
+            echo "::error::rounds and seconds must be whole numbers"
+            exit 1
+          fi
+          export SCALE_SECONDS
+          benchmarks/perreq/run.sh scaling target/release/rdock "$RUNNER_TEMP/scaling" "$ROUNDS"
+      - name: Summary
+        run: |
+          {
+            echo "## CPU scaling on a hosted runner (commit ${GITHUB_SHA::12})"
+            echo
+            echo "Closed-loop saturation, one rdock pinned to 1, 2 and 4 of the runner's CPUs. At 4 CPUs the generator shares the cores with the proxy: that row is a lower bound. Hosted runners are shared and noisy; read the ranges."
+            echo
+            python3 -I benchmarks/perreq/summarize.py scaling "$RUNNER_TEMP/scaling"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: scaling-${{ github.run_id }}
+          path: ${{ runner.temp }}/scaling/
+          if-no-files-found: ignore
+          retention-days: 90

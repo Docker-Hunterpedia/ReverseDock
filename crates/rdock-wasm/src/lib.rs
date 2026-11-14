@@ -11,7 +11,9 @@
 //! WASI. Without the feature this crate holds only the digest and signature checks.
 
 pub mod artifact;
-pub mod minisign;
+/// The minisign verifier, shared with binary upgrades (`upgrade.trusted_keys`); it lives in
+/// `rdock-credentials`.
+pub use rdock_credentials::minisign;
 
 #[cfg(feature = "testing")]
 pub mod testing;

@@ -11,6 +11,37 @@ pub struct CertRequest {
     pub dns_provider: Option<String>,
 }
 
+impl CertRequest {
+    /// Joins requests that share a first name into one with the names of all of them (in
+    /// order of appearance) and the first one's DNS provider. A certificate is stored and
+    /// leased under its first name, so two requests with the same first name would replace each
+    /// other's certificate for ever (ADR-0031, review finding H1). Order is otherwise kept.
+    #[must_use]
+    pub fn merge_shared_first_names(requests: impl IntoIterator<Item = Self>) -> Vec<Self> {
+        let mut out: Vec<Self> = Vec::new();
+        for request in requests {
+            let existing = request
+                .names
+                .first()
+                .and_then(|first| out.iter_mut().find(|r| r.names.first() == Some(first)));
+            match existing {
+                Some(existing) => {
+                    for name in request.names {
+                        if !existing.names.contains(&name) {
+                            existing.names.push(name);
+                        }
+                    }
+                    if existing.dns_provider.is_none() {
+                        existing.dns_provider = request.dns_provider;
+                    }
+                }
+                None => out.push(request),
+            }
+        }
+        out
+    }
+}
+
 /// Suffixes no public certificate authority issues for (RFC 2606, RFC 6761, RFC 6762,
 /// RFC 8375, and `.internal` from ICANN's 2024 reservation). The local CA's name constraints
 /// permit exactly these names and their subdomains.
@@ -69,6 +100,29 @@ fn has_private_suffix(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::CertRequest;
+
+    #[test]
+    fn requests_sharing_a_first_name_are_joined() {
+        let request = |names: &[&str], dns: Option<&str>| CertRequest {
+            names: names.iter().map(|n| (*n).to_owned()).collect(),
+            dns_provider: dns.map(str::to_owned),
+        };
+        let merged = CertRequest::merge_shared_first_names([
+            request(&["a.com"], None),
+            request(&["a.com", "www.a.com"], Some("dns")),
+            request(&["b.com"], None),
+            request(&["a.com", "api.a.com"], None),
+        ]);
+        assert_eq!(
+            merged,
+            [
+                request(&["a.com", "www.a.com", "api.a.com"], Some("dns")),
+                request(&["b.com"], None),
+            ]
+        );
+    }
+
     use super::{is_local_ca_name, is_private_name};
 
     #[test]

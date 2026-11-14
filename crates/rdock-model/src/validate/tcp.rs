@@ -46,6 +46,7 @@ impl Validator<'_> {
             if service.backends.is_empty() {
                 self.error(format!("{path}.backends"), "the service has no backends");
             }
+            self.check_backend_tiers(&path, &service.backends, false);
             for (i, backend) in service.backends.iter().enumerate() {
                 if backend.weight == 0 {
                     self.error(

@@ -55,6 +55,8 @@ pub(crate) struct Jwt {
     /// The claim that names the consumer, and the one that lists its groups.
     consumer_claim: Option<String>,
     groups_claim: Option<String>,
+    /// `trusted_groups`: token groups that count for group keys and overrides.
+    trusted_groups: Vec<String>,
     /// `map_to_consumers`: the claim names a consumer of `consumers`.
     map_to_consumers: bool,
     /// `unverified_emails`: an `email` without `email_verified` names the consumer.
@@ -157,6 +159,7 @@ impl Jwt {
             access: false,
             consumer_claim: config.consumer_claim.clone(),
             groups_claim: config.groups_claim.clone(),
+            trusted_groups: config.trusted_groups.clone(),
             map_to_consumers: config.map_to_consumers,
             unverified_emails: config.unverified_emails,
             consumers,
@@ -205,18 +208,34 @@ impl Jwt {
             .map_to_consumers
             .then(|| self.consumers.consumer(&consumer.name))
             .flatten();
+        // Token groups listed in `trusted_groups` count as configured ones; they go first.
+        let (mut groups, claimed): (Vec<Arc<str>>, Vec<Arc<str>>) = consumer
+            .groups
+            .iter()
+            .cloned()
+            .partition(|g| self.trusted_groups.iter().any(|t| **t == **g));
         let Some(defined) = defined else {
             consumer.issuer = Some(self.token_issuer(claims));
+            consumer.trusted_groups = groups.len();
+            groups.extend(claimed);
+            consumer.groups = Arc::from(groups);
             return;
         };
         consumer.issuer = None;
-        let mut groups: Vec<Arc<str>> = consumer.groups.to_vec();
-        for group in defined.groups.iter() {
-            if !groups.contains(group) {
-                groups.push(group.clone());
+        // The configured consumer's groups first: they are its primary group.
+        let mut ordered: Vec<Arc<str>> = defined.groups.to_vec();
+        for group in groups {
+            if !ordered.contains(&group) {
+                ordered.push(group);
             }
         }
-        consumer.groups = Arc::from(groups);
+        consumer.trusted_groups = ordered.len();
+        for group in claimed {
+            if !ordered.contains(&group) {
+                ordered.push(group);
+            }
+        }
+        consumer.groups = Arc::from(ordered);
     }
 
     /// The token and, for header tokens, the header it came from.
@@ -417,6 +436,8 @@ fn access_consumer(
         return Some(crate::Consumer {
             name: Arc::from(common_name),
             groups: Arc::from([Arc::from(SERVICE_TOKEN_GROUP)]),
+            // A fixed group the middleware assigns, not a value of the token.
+            trusted_groups: 1,
             issuer: Some(Arc::from(format!("{issuer} {SERVICE_TOKEN_GROUP}"))),
         });
     }
@@ -462,6 +483,7 @@ fn claim_consumer(
     Some(crate::Consumer {
         name: Arc::from(name.as_str()),
         groups: Arc::from(groups),
+        trusted_groups: 0,
         issuer: None,
     })
 }
@@ -522,6 +544,7 @@ impl Middleware for Jwt {
                     remote.refresh_early();
                 }
                 tracing::debug!(middleware = %self.name, reason = %why, "JWT refused");
+                cx.auth_failed = true;
                 return unauthorized(Some("invalid_token"));
             }
         };
@@ -541,6 +564,7 @@ impl Middleware for Jwt {
             let issuer = self.token_issuer(&claims);
             let Some(consumer) = access_consumer(&claims, &issuer) else {
                 tracing::debug!(middleware = %self.name, "Access token without email or common_name");
+                cx.auth_failed = true;
                 return unauthorized(Some("invalid_token"));
             };
             cx.user = Some(consumer.name.to_string());
@@ -553,6 +577,7 @@ impl Middleware for Jwt {
                 self.unverified_emails,
             ) else {
                 tracing::debug!(middleware = %self.name, claim = %claim, "JWT without the consumer claim");
+                cx.auth_failed = true;
                 return unauthorized(Some("invalid_token"));
             };
             self.place(&mut consumer, &claims);

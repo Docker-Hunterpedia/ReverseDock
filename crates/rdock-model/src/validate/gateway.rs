@@ -8,7 +8,7 @@ use crate::diagnostics::{Diagnostic, path_index, path_key};
 use crate::gateway::{ApiKeyConfig, QuotaConfig, parse_rfc3339};
 use crate::middleware::{Identity, Middleware, RateLimitConfig};
 use crate::route::Route;
-use crate::values::{RateLimitKey, is_token};
+use crate::values::is_token;
 
 /// Most events in one metering batch.
 const MAX_BATCH: u32 = 10_000;
@@ -128,10 +128,10 @@ impl Validator<'_> {
         if limit.overrides.is_empty() {
             return;
         }
-        if limit.key != RateLimitKey::Consumer {
+        if !limit.key.needs_consumer() {
             self.error(
                 format!("{path}.overrides"),
-                "per-group overrides need `key: consumer`",
+                "per-group overrides need `key: consumer` or `key: group`",
             );
         }
         for (group, o) in &limit.overrides {
@@ -147,10 +147,10 @@ impl Validator<'_> {
 
     pub(super) fn check_quota(&mut self, path: &str, quota: &QuotaConfig) {
         self.check_not_zero(&format!("{path}.limit"), quota.limit == 0);
-        if quota.key != RateLimitKey::Consumer {
+        if !quota.key.needs_consumer() {
             self.error(
                 format!("{path}.key"),
-                "a quota counts per consumer: use `key: consumer` (the default)",
+                "a quota counts per consumer or per group: use `key: consumer` (the default) or `key: group`",
             );
         }
         for (group, limit) in &quota.overrides {
@@ -172,10 +172,13 @@ impl Validator<'_> {
                 continue;
             };
             let by_consumer = match middleware {
-                Middleware::RateLimit(r) => r.key == RateLimitKey::Consumer,
-                Middleware::InFlight(f) => f.key == RateLimitKey::Consumer,
-                Middleware::Bandwidth(b) => b.key == RateLimitKey::Consumer,
+                Middleware::RateLimit(r) => r.key.needs_consumer(),
+                Middleware::InFlight(f) => f.key.needs_consumer(),
+                Middleware::Bandwidth(b) => b.key.needs_consumer(),
                 Middleware::Quota(_) => true,
+                // Checked in `request` before the consumer is known, a consumer ban would be
+                // recorded but never enforced.
+                Middleware::Abuse(a) => a.key == crate::values::AbuseKey::Consumer,
                 _ => false,
             };
             if by_consumer && !identified {

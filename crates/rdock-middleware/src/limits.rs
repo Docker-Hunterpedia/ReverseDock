@@ -44,6 +44,19 @@ pub(crate) fn key_of(key: &RateLimitKey, req: &RequestHeader, cx: &Context) -> V
             Some(consumer) => [b"c:", consumer.key().as_bytes()].concat(),
             None => format!("ip:{}", cx.client_ip).into_bytes(),
         },
+        // A consumer's primary group; a consumer without one on its own, no consumer per IP.
+        RateLimitKey::Group => match &cx.consumer {
+            Some(consumer) => match consumer.primary_group() {
+                Some(group) => [b"g:", group.as_bytes()].concat(),
+                None => [b"c:", consumer.key().as_bytes()].concat(),
+            },
+            None => format!("ip:{}", cx.client_ip).into_bytes(),
+        },
+        // Connections without a fingerprint are counted per client IP, apart from every JA4.
+        RateLimitKey::Ja4 => match cx.fingerprint.as_ref().and_then(|f| f.ja4.as_deref()) {
+            Some(ja4) => [b"j:", ja4.as_bytes()].concat(),
+            None => format!("ip:{}", cx.client_ip).into_bytes(),
+        },
     }
 }
 
@@ -179,6 +192,26 @@ mod tests {
             key_of(&RateLimitKey::Cookie("none".into()), &req, &c),
             Vec::<u8>::new()
         );
+        assert_eq!(key_of(&RateLimitKey::Ja4, &req, &c), b"ip:192.0.2.10");
+        assert_eq!(key_of(&RateLimitKey::Group, &req, &c), b"ip:192.0.2.10");
+        let mut grouped = cx();
+        grouped.consumer = Some(crate::Consumer::configured("ann", &["acme", "gold"]));
+        assert_eq!(key_of(&RateLimitKey::Group, &req, &grouped), b"g:acme");
+        grouped.consumer = Some(crate::Consumer::named("solo"));
+        assert_eq!(
+            key_of(&RateLimitKey::Group, &req, &grouped),
+            b"c:solo",
+            "a consumer without a group is counted on its own"
+        );
+        let mut with = cx();
+        with.fingerprint = Some(Arc::new(crate::ClientFingerprint {
+            ja4: Some(Arc::from("t13d1516h2_8daaf6152771_e5627efa2ab1")),
+            ja3: None,
+        }));
+        assert_eq!(
+            key_of(&RateLimitKey::Ja4, &req, &with),
+            b"j:t13d1516h2_8daaf6152771_e5627efa2ab1"
+        );
     }
 
     #[test]
@@ -188,6 +221,7 @@ mod tests {
             key: RateLimitKey::ClientIp,
             queue: 0,
             queue_timeout: rdock_model::values::Duration::from_secs(1),
+            scope: rdock_model::middleware::LimitScope::Instance,
         });
         let mut first = cx();
         let mut req = request("GET", "/", &[]);

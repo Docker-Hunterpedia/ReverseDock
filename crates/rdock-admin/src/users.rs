@@ -40,6 +40,9 @@ pub struct User {
     /// The user's second factor, once enrolled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mfa: Option<Mfa>,
+    /// The tenant the user is scoped to (`tenants.<name>`); `None` for everything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<String>,
 }
 
 /// A user's TOTP secret and recovery codes.
@@ -68,6 +71,7 @@ impl User {
             created_at,
             disabled: false,
             mfa: None,
+            tenant: None,
         }
     }
 }

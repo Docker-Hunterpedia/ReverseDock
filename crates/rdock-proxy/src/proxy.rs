@@ -23,7 +23,7 @@ use rdock_middleware::{
     Answered, Body, BodyHolder, Chain, Context as MwContext, HoldError, LogSummary, Released,
     Reply, Upstream,
 };
-use rdock_model::service::RetryOn;
+use rdock_model::service::{LatencyMeasure, RetryOn};
 use rdock_observability::{AccessRecord, Metrics, rfc3339};
 
 use crate::errorpage;
@@ -49,6 +49,20 @@ pub struct Shared {
     pub in_flight: Arc<std::sync::atomic::AtomicU32>,
     /// Spool directory for held request bodies over 64 KiB; unset, they stay in memory.
     pub spool: std::sync::OnceLock<Arc<rdock_middleware::Spool>>,
+    /// Whether listeners accept new connections (and `udp` listeners read datagrams). A binary
+    /// upgrade starts the new process with `false` and pauses the old one between `ready` and
+    /// `serving`; connections wait in the kernel's backlog meanwhile.
+    pub accepting: tokio::sync::watch::Sender<bool>,
+    /// Client connections open across TCP listeners (a draining process reports them).
+    pub open_connections: std::sync::atomic::AtomicU64,
+    /// Serve without the HTTP caches. A binary upgrade sets it in the old process from the
+    /// start of the handover: the new process owns the cache directories from then on (its
+    /// start-up walk removes unfinished files) and the old one only drains.
+    pub cache_bypass: std::sync::atomic::AtomicBool,
+    /// The `Alt-Svc` value of each listener whose HTTP/3 endpoint serves and advertises
+    /// (ADR-0032), added to its HTTP/1 and HTTP/2 responses.
+    #[cfg(feature = "http3")]
+    pub alt_svc: ArcSwap<std::collections::HashMap<Arc<str>, HeaderValue>>,
 }
 
 /// One request counted in [`Shared::in_flight`] until dropped.
@@ -88,6 +102,35 @@ pub struct RdockProxy {
 }
 
 impl RdockProxy {
+    /// Adds this listener's HTTP/3 advertisement (`Alt-Svc`, RFC 9114 §3.1.1) to an HTTP/1 or
+    /// HTTP/2 response while its QUIC endpoint serves with `advertise` on (ADR-0032). It
+    /// replaces a backend's `Alt-Svc`: clients reach the proxy, not the backend.
+    #[cfg(feature = "http3")]
+    fn advertise_http3(&self, session: &Session, resp: &mut ResponseHeader) {
+        if is_http3(session) {
+            return;
+        }
+        if let Some(value) = self.shared.alt_svc.load().get(&self.listener) {
+            let _ = resp.insert_header(http::header::ALT_SVC, value.clone());
+        }
+    }
+
+    /// Counts an answered HTTP/3 request in `rdock_http3_requests_total`.
+    fn count_http3(&self, session: &Session, status: u16) {
+        if is_http3(session) {
+            self.shared
+                .metrics
+                .http3_requests
+                .with_label_values(&[&*self.listener, rdock_observability::status_class(status)])
+                .inc();
+        }
+    }
+
+    /// Without the `http3` feature there is nothing to advertise.
+    #[cfg(not(feature = "http3"))]
+    #[allow(clippy::unused_self)]
+    fn advertise_http3(&self, _session: &Session, _resp: &mut ResponseHeader) {}
+
     /// Per-backend answer counts and time to response headers (M-OBS-02). Label values come
     /// from the configuration and resolved addresses, so their number stays bounded.
     fn observe_backend(&self, service: &ServiceRuntime, ctx: &RequestCtx, status: u16) {
@@ -115,6 +158,9 @@ impl RdockProxy {
         let (Some(passive), Some(member)) = (&service.health.passive, member) else {
             return;
         };
+        if passive.outlier.is_some() {
+            member.state.record_outcome(ok);
+        }
         let now = Instant::now();
         let metrics = &self.shared.metrics;
         if ok {
@@ -168,6 +214,34 @@ impl RdockProxy {
                 "backend keeps failing, but max_ejection_percent of the pool is already ejected"
             ),
             Ejection::None => {}
+        }
+    }
+
+    /// Feeds `peak_ewma` the latency of the current attempt: its time so far, or for a failed
+    /// attempt at least [`rdock_balancer::FAILURE_PENALTY`], so that a backend that fails fast
+    /// does not look fast.
+    fn sample(service: &ServiceRuntime, ctx: &RequestCtx, ok: bool) {
+        let (Some(peak), Some(member), Some(started)) =
+            (service.selection.peak, &ctx.member, ctx.attempt_started)
+        else {
+            return;
+        };
+        let now = Instant::now();
+        let latency = member.state.latency();
+        if ok {
+            latency.observe(now.saturating_duration_since(started), peak.decay, now);
+        } else {
+            latency.observe_failure(now.saturating_duration_since(started), peak.decay, now);
+        }
+    }
+
+    /// `measure: last_byte`: the sample of an attempt that answered, when its response ends; a
+    /// response cut short is a failure.
+    fn sample_at_end(ctx: &mut RequestCtx, ok: bool) {
+        if std::mem::take(&mut ctx.sample_at_end)
+            && let Some(service) = &ctx.service
+        {
+            Self::sample(service, ctx, ok);
         }
     }
 
@@ -303,10 +377,13 @@ pub struct RequestCtx {
     started: Instant,
     started_at: SystemTime,
     runtime: Arc<Runtime>,
-    request_id: Arc<str>,
+    /// Set by `early_request_filter`; `None` only for a request refused before that.
+    request_id: Option<Arc<str>>,
     peer: Option<IpAddr>,
     client_ip: Option<IpAddr>,
     tls: bool,
+    /// The `Host` header (or the URI's authority) as sent; moved into the middleware context
+    /// when the route's `request` phase starts, and empty after that.
     authority: String,
     host: String,
     path: String,
@@ -334,6 +411,9 @@ pub struct RequestCtx {
     retry_permit: Option<RetryPermit>,
     /// `upstream_response_filter` turned a status into a retry already counted.
     status_retry: bool,
+    /// `peak_ewma` with `measure: last_byte`: the attempt answered and its sample is taken
+    /// when the response ends.
+    sample_at_end: bool,
     set_cookie: Option<String>,
     body_bytes: u64,
     sent_replacement: bool,
@@ -357,6 +437,13 @@ pub struct RequestCtx {
 enum Hold {
     Collecting(BodyHolder),
     Released(Bytes),
+}
+
+impl RequestCtx {
+    /// The request's ID; empty for a request refused before it got one.
+    fn request_id(&self) -> &str {
+        self.request_id.as_deref().unwrap_or_default()
+    }
 }
 
 /// How rdock's own answers are rendered for this request: the route's `errors.format`, or
@@ -503,7 +590,7 @@ impl RdockProxy {
                 .and_then(|v| v.to_str().ok());
             let page = errorpage::render(&errorpage::ErrorInfo {
                 status: reply.status,
-                request_id: &ctx.request_id,
+                request_id: ctx.request_id(),
                 accept,
                 format: error_format(ctx),
                 kind: reply.problem,
@@ -532,7 +619,8 @@ impl RdockProxy {
             .as_mut()
             .and_then(|cx| cx.replace_body.take())
             .map_or(body, Body::Bytes);
-        resp.insert_header("x-request-id", &*ctx.request_id)?;
+        resp.insert_header("x-request-id", ctx.request_id())?;
+        self.advertise_http3(session, &mut resp);
         let head = session.req_header().method == http::Method::HEAD;
         let compressed = ctx.mw.as_ref().is_some_and(|cx| cx.compression.is_some());
         if compressed && !head && session.req_header().version == Version::HTTP_11 {
@@ -559,11 +647,18 @@ impl RdockProxy {
             client_ip,
             ctx.tls,
             route.name.clone(),
-            ctx.request_id.clone(),
-            ctx.authority.clone(),
+            ctx.request_id.clone().unwrap_or_else(|| Arc::from("")),
+            // Read only up to here; the middleware context takes it instead of a copy.
+            std::mem::take(&mut ctx.authority),
         );
         cx.client_cert = client_identity(session);
+        cx.fingerprint = connection_fingerprint(
+            session,
+            self.listener(&ctx.runtime),
+            &ctx.runtime.fingerprint_headers,
+        );
         cx.has_body = !session.is_body_empty() && !is_upgrade(session.req_header());
+        cx.priority_class = route.priority_class;
         let chain = &route.middlewares;
         chain.start(&mut cx);
         let answered = chain.request(session.req_header_mut(), &mut cx).await;
@@ -586,8 +681,7 @@ impl RdockProxy {
             .await?;
             return Ok(true);
         }
-        let spool = self.shared.spool.get().cloned();
-        start_hold(session, ctx, route, spool)?;
+        start_hold(session, ctx, route, &self.shared.spool)?;
         start_mirror(session.req_header(), ctx, route);
         Ok(false)
     }
@@ -692,6 +786,7 @@ impl RdockProxy {
     }
 
     /// The access-log record of a finished request.
+    #[allow(clippy::too_many_lines)] // one field after the other
     fn access_record(
         &self,
         session: &Session,
@@ -717,9 +812,16 @@ impl RdockProxy {
                 })
         };
         let ssl = session.digest().and_then(|d| d.ssl_digest.clone());
+        let tls_facts = handshake(session);
+        let fingerprint = tls_facts.and_then(|h| h.fingerprint.get().cloned());
+        let wanted = ctx.runtime.geoip_log;
+        let geo = (wanted.country || wanted.asn)
+            .then(|| Some(ctx.runtime.geoip.as_ref()?.lookup(ctx.client_ip?)))
+            .flatten()
+            .unwrap_or_default();
         AccessRecord {
             ts: rfc3339(ctx.started_at),
-            request_id: ctx.request_id.to_string(),
+            request_id: ctx.request_id().to_owned(),
             client_ip: ctx.client_ip.map(|ip| ip.to_string()).unwrap_or_default(),
             proxy_peer: session
                 .digest()
@@ -731,6 +833,8 @@ impl RdockProxy {
             query_len: ctx.query_len,
             proto: if session.is_http2() {
                 "HTTP/2".into()
+            } else if is_http3(session) {
+                "HTTP/3".into()
             } else {
                 format!("{:?}", req.version)
             },
@@ -752,10 +856,7 @@ impl RdockProxy {
             },
             tls_version: ssl.as_ref().map(|s| s.version.to_string()),
             tls_cipher: ssl.as_ref().map(|s| s.cipher.to_string()),
-            sni: ssl
-                .as_ref()
-                .and_then(|s| s.extension.get::<crate::listener::Handshake>())
-                .and_then(|h| h.sni.clone()),
+            sni: tls_facts.and_then(|h| h.sni.clone()),
             user: ctx.mw.as_ref().and_then(|cx| cx.user.clone()),
             consumer: ctx
                 .mw
@@ -772,6 +873,30 @@ impl RdockProxy {
             cf_ray: header("cf-ray"),
             error: ctx.error.take().or_else(|| e.map(ToString::to_string)),
             cache_status: ctx.cache.as_ref().and_then(|c| c.label).map(str::to_owned),
+            ja4: fingerprint
+                .as_ref()
+                .and_then(|f| f.ja4.as_deref())
+                .map(str::to_owned),
+            ja3: fingerprint
+                .as_ref()
+                .and_then(|f| f.ja3.as_deref())
+                .map(str::to_owned),
+            country: geo
+                .country_str()
+                .filter(|_| wanted.country)
+                .map(str::to_owned),
+            asn: geo.asn.filter(|_| wanted.asn),
+            abuse: ctx.mw.as_ref().and_then(|cx| cx.abuse).map(str::to_owned),
+            admission: ctx
+                .mw
+                .as_ref()
+                .and_then(|cx| cx.admission)
+                .map(str::to_owned),
+            spiffe_id: ctx
+                .mw
+                .as_ref()
+                .and_then(|cx| cx.spiffe_id.as_deref())
+                .map(str::to_owned),
         }
     }
 }
@@ -785,7 +910,7 @@ impl ProxyHttp for RdockProxy {
             started: Instant::now(),
             started_at: SystemTime::now(),
             runtime: self.shared.runtime.load_full(),
-            request_id: Arc::from(""),
+            request_id: None,
             peer: None,
             client_ip: None,
             tls: false,
@@ -808,6 +933,7 @@ impl ProxyHttp for RdockProxy {
             tried: Vec::new(),
             retry_permit: None,
             status_retry: false,
+            sample_at_end: false,
             set_cookie: None,
             body_bytes: 0,
             sent_replacement: false,
@@ -876,7 +1002,14 @@ impl ProxyHttp for RdockProxy {
             .and_then(|v| v.to_str().ok())
             .filter(|v| trusted && valid_request_id(v))
             .map(Arc::from);
-        ctx.request_id = incoming_id.unwrap_or_else(|| Arc::from(uuid::Uuid::now_v7().to_string()));
+        // Encoded on the stack and copied once into the shared string.
+        ctx.request_id = Some(incoming_id.unwrap_or_else(|| {
+            Arc::from(
+                &*uuid::Uuid::now_v7()
+                    .hyphenated()
+                    .encode_lower(&mut uuid::Uuid::encode_buffer()),
+            )
+        }));
         Self::check_request(&runtime, req)
     }
 
@@ -909,6 +1042,11 @@ impl ProxyHttp for RdockProxy {
             })
             .unwrap_or_default();
         let client_ip = ctx.client_ip.unwrap_or(IpAddr::from([0, 0, 0, 0]));
+        let fingerprint = listener
+            .fingerprint
+            .as_ref()
+            .and_then(|_| handshake(session))
+            .and_then(|h| h.fingerprint.get().cloned());
         let route = {
             let req = session.req_header();
             let facts = Facts {
@@ -918,10 +1056,14 @@ impl ProxyHttp for RdockProxy {
                 headers: &req.headers,
                 query: &query,
                 client_ip,
+                fingerprint: fingerprint.as_deref(),
             };
+            // Only the routes that can match this host, in evaluation order (the index
+            // keeps the result of a scan over every route).
             listener
-                .routes
-                .iter()
+                .route_index
+                .candidates(&ctx.host)
+                .filter_map(|i| listener.routes.get(i))
                 .find(|r| r.rule.matches(&facts))
                 .cloned()
         };
@@ -949,7 +1091,7 @@ impl ProxyHttp for RdockProxy {
         );
         session
             .req_header_mut()
-            .insert_header("x-request-id", &*ctx.request_id)?;
+            .insert_header("x-request-id", ctx.request_id())?;
         if let Some(trace) = &ctx.trace {
             trace.route(session.req_header().method.as_str(), &route.name, client_ip);
         }
@@ -1004,6 +1146,13 @@ impl ProxyHttp for RdockProxy {
         ctx: &mut RequestCtx,
     ) -> pingora::Result<()> {
         let mirrored = ctx.mirror.is_some();
+        if self
+            .shared
+            .cache_bypass
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return Ok(());
+        }
         if let Some(cc) = ctx.cache.as_mut() {
             crate::cache::enable(session, cc, mirrored);
         }
@@ -1156,6 +1305,11 @@ impl ProxyHttp for RdockProxy {
                 &ctx.tried,
             ));
         }
+        if let Some(per_try) = per_try_timeout(session, ctx, &service) {
+            let read = peer.options.read_timeout.unwrap_or(per_try);
+            peer.options.read_timeout = Some(read.min(per_try));
+        }
+        ctx.sample_at_end = false;
         ctx.in_flight = Some(selected.member.state.begin());
         ctx.upstream = Some(selected.member.candidate.clone());
         ctx.member = Some(selected.member);
@@ -1205,7 +1359,7 @@ impl ProxyHttp for RdockProxy {
         if let Some(trace) = &ctx.trace {
             trace.inject(upstream_request);
         }
-        let Some(route) = ctx.route.clone() else {
+        let Some(route) = ctx.route.as_ref() else {
             return Ok(());
         };
         let flags = route.middlewares.flags();
@@ -1256,6 +1410,16 @@ impl ProxyHttp for RdockProxy {
             .as_ref()
             .is_some_and(|p| p.statuses.contains(&status));
         self.report(&service, ctx.member.as_ref(), !failed);
+        if let Some(peak) = service.selection.peak {
+            // Without passive health, the statuses it would count are 502, 503 and 504.
+            let bad = failed || (service.health.passive.is_none() && matches!(status, 502..=504));
+            let at_end = peak.measure == LatencyMeasure::LastByte;
+            if bad || !at_end {
+                Self::sample(&service, ctx, !bad);
+            }
+            // An upgraded connection's lifetime is not a latency.
+            ctx.sample_at_end = at_end && !bad && status != 101;
+        }
         if let Some(retries) = &service.retries
             && let Some(kind) = retries
                 .on
@@ -1299,7 +1463,13 @@ impl ProxyHttp for RdockProxy {
         if !session.is_http2() {
             upstream_response.set_version(Version::HTTP_11);
         }
+        let stored = ctx.cache.is_some() && crate::cache::from_store(session);
         if let (Some(route), Some(cx)) = (&ctx.route, ctx.mw.as_mut()) {
+            // A cache hit is rdock's answer, not the backend's.
+            if !stored {
+                cx.backend =
+                    rdock_middleware::BackendOutcome::Responded(upstream_response.status.as_u16());
+            }
             let chain = &route.middlewares;
             chain.response(chain.len(), upstream_response, cx).await;
         }
@@ -1310,12 +1480,13 @@ impl ProxyHttp for RdockProxy {
             crate::cache::decorate(session, upstream_response, cc);
             if crate::cache::from_store(session) {
                 // A stored response's ID belongs to the request that filled the cache.
-                upstream_response.insert_header("x-request-id", &*ctx.request_id)?;
+                upstream_response.insert_header("x-request-id", ctx.request_id())?;
             }
         }
         if !upstream_response.headers.contains_key("x-request-id") {
-            upstream_response.insert_header("x-request-id", &*ctx.request_id)?;
+            upstream_response.insert_header("x-request-id", ctx.request_id())?;
         }
+        self.advertise_http3(session, upstream_response);
         Ok(())
     }
 
@@ -1397,6 +1568,10 @@ impl ProxyHttp for RdockProxy {
                 trace.failed(kind);
             }
             self.report(service, ctx.member.as_ref(), false);
+            Self::sample(service, ctx, false);
+            if let Some(cx) = ctx.mw.as_mut() {
+                cx.backend = rdock_middleware::BackendOutcome::Failed;
+            }
         }
         let mut e = e;
         let service = ctx.service.clone();
@@ -1436,6 +1611,14 @@ impl ProxyHttp for RdockProxy {
             && let Some(service) = &ctx.service
         {
             self.report(service, ctx.member.as_ref(), false);
+            if let Some(cx) = ctx.mw.as_mut() {
+                cx.backend = rdock_middleware::BackendOutcome::Failed;
+            }
+            if !ctx.status_retry {
+                // A retried status was sampled when it arrived.
+                ctx.sample_at_end = false;
+                Self::sample(service, ctx, false);
+            }
         }
         if let Some(trace) = ctx.trace.as_mut() {
             trace.failed(e.etype().as_str());
@@ -1512,7 +1695,7 @@ impl ProxyHttp for RdockProxy {
                 || {
                     errorpage::render(&errorpage::ErrorInfo {
                         status: code,
-                        request_id: &ctx.request_id,
+                        request_id: ctx.request_id(),
                         accept: accept.as_deref(),
                         format: error_format(ctx),
                         kind: None,
@@ -1533,7 +1716,8 @@ impl ProxyHttp for RdockProxy {
                     let _ = resp.insert_header(http::header::CONTENT_LANGUAGE, language);
                 }
                 let _ = resp.insert_header(http::header::CACHE_CONTROL, "no-store");
-                let _ = resp.insert_header("x-request-id", &*ctx.request_id);
+                let _ = resp.insert_header("x-request-id", ctx.request_id());
+                self.advertise_http3(session, &mut resp);
                 if let Some(cc) = ctx.cache.as_mut() {
                     crate::cache::decorate(session, &mut resp, cc);
                 }
@@ -1557,6 +1741,7 @@ impl ProxyHttp for RdockProxy {
     }
 
     async fn logging(&self, session: &mut Session, e: Option<&Error>, ctx: &mut RequestCtx) {
+        Self::sample_at_end(ctx, e.is_none());
         ctx.in_flight = None;
         // Frees a held body now; a spool file has no name and goes with its descriptor.
         ctx.hold = None;
@@ -1571,6 +1756,7 @@ impl ProxyHttp for RdockProxy {
         if let Some(mut trace) = ctx.trace.take() {
             trace.finish(status);
         }
+        self.count_http3(session, status);
         let route = ctx.route.as_ref();
         let route_name = route.map_or("", |r| &*r.name);
         let service = ctx.service.clone();
@@ -1629,18 +1815,23 @@ impl ProxyHttp for RdockProxy {
                 });
             }
         }
-        let sample = rdock_observability::live::Sample {
-            status,
-            elapsed,
-            bytes_in: session.body_bytes_read() as u64,
-            bytes_out: session.body_bytes_sent() as u64,
-        };
-        let now = std::time::SystemTime::now();
-        if let Some(route) = route {
-            route.live.record(sample, now);
-        }
-        if let Some(service) = &service {
-            service.live.record(sample, now);
+        let route_ring = route.map(|r| &r.live).filter(|r| r.is_recording());
+        let service_ring = service
+            .as_ref()
+            .map(|s| &s.live)
+            .filter(|r| r.is_recording());
+        // Off unless the admin API or a threshold alert reads the rings.
+        if route_ring.is_some() || service_ring.is_some() {
+            let sample = rdock_observability::live::Sample {
+                status,
+                elapsed,
+                bytes_in: session.body_bytes_read() as u64,
+                bytes_out: session.body_bytes_sent() as u64,
+            };
+            let now = std::time::SystemTime::now();
+            for ring in route_ring.into_iter().chain(service_ring) {
+                ring.record(sample, now);
+            }
         }
         let feed = &self.shared.metrics.feeds.logs;
         // Building the record is about twenty allocations; skip it when nobody reads it.
@@ -1663,11 +1854,64 @@ fn client_identity(session: &mut Session) -> Option<Arc<rdock_middleware::Client
     for name in rdock_middleware::IDENTITY_HEADERS {
         session.req_header_mut().remove_header(name);
     }
+    handshake(session).and_then(|h| h.client_cert.clone())
+}
+
+/// What the TLS handshake of the connection established: from Pingora's TLS digest for HTTP/1
+/// and HTTP/2, from the request's extensions for HTTP/3, whose custom session cannot carry our
+/// value in the digest (`SslDigestExtension::set` is crate-private in Pingora 0.9.1).
+fn handshake(session: &Session) -> Option<&crate::listener::Handshake> {
     session
         .digest()
         .and_then(|d| d.ssl_digest.as_ref())
         .and_then(|s| s.extension.get::<crate::listener::Handshake>())
-        .and_then(|h| h.client_cert.clone())
+        .or_else(|| {
+            session
+                .is_custom()
+                .then(|| {
+                    session
+                        .req_header()
+                        .extensions
+                        .get::<Arc<crate::listener::Handshake>>()
+                })
+                .flatten()
+                .map(AsRef::as_ref)
+        })
+}
+
+/// Whether the request came over HTTP/3 (an `https` listener's QUIC side, ADR-0032).
+fn is_http3(session: &Session) -> bool {
+    session.is_custom() && session.req_header().version == Version::HTTP_3
+}
+
+/// The TLS client fingerprints of the connection. Every listener's fingerprint headers are
+/// removed from what the client sent, on every listener; the listener's own are then set to
+/// the computed values when it computes them.
+fn connection_fingerprint(
+    session: &mut Session,
+    listener: Option<&ListenerRuntime>,
+    all_headers: &[String],
+) -> Option<Arc<rdock_middleware::ClientFingerprint>> {
+    for name in all_headers {
+        session.req_header_mut().remove_header(name.as_str());
+    }
+    let wanted = listener.and_then(|l| l.fingerprint.as_ref())?;
+    let found = handshake(session).and_then(|h| h.fingerprint.get().cloned());
+    let req = session.req_header_mut();
+    for (header, value) in [
+        (&wanted.header, found.as_ref().and_then(|f| f.ja4.clone())),
+        (
+            &wanted.ja3_header,
+            found.as_ref().and_then(|f| f.ja3.clone()),
+        ),
+    ] {
+        let Some(name) = header else { continue };
+        req.remove_header(name.as_str());
+        if let Some(value) = value {
+            let _ = req.insert_header(name.clone(), value.as_ref());
+        }
+    }
+    found
 }
 
 /// Sends a reply body: one write for bytes in memory, chunk by chunk for a file.
@@ -1773,7 +2017,7 @@ fn start_hold(
     session: &mut Session,
     ctx: &mut RequestCtx,
     route: &RouteRuntime,
-    spool: Option<Arc<rdock_middleware::Spool>>,
+    spool: &std::sync::OnceLock<Arc<rdock_middleware::Spool>>,
 ) -> pingora::Result<()> {
     if route.middlewares.flags().request_body.is_none()
         || session.is_body_empty()
@@ -1798,6 +2042,8 @@ fn start_hold(
     if declared_length(session.req_header()).is_some_and(|length| length > limit) {
         return Err(status_error(413, "request body too large to hold"));
     }
+    // The spool is shared by the process; only a route that holds a body takes a handle.
+    let spool = spool.get().cloned();
     ctx.hold = Some(Hold::Collecting(BodyHolder::new(hold, limit, spool)));
     Ok(())
 }
@@ -1858,6 +2104,86 @@ impl MirrorCopy {
     }
 }
 
+/// Reports what an outlier detector did with `backend` of `service`: logs, events, alerts and
+/// metrics, as a failure ejection does.
+pub(crate) fn outlier_ejected(
+    service: &ServiceRuntime,
+    backend: &str,
+    detector: rdock_balancer::Detector,
+    result: Ejection,
+    metrics: &rdock_observability::Metrics,
+) {
+    let reason = match detector {
+        rdock_balancer::Detector::SuccessRate => "ejected as an outlier by success rate",
+        rdock_balancer::Detector::FailurePercentage => {
+            "ejected as an outlier by failure percentage"
+        }
+    };
+    match result {
+        Ejection::Ejected(time) => {
+            tracing::warn!(
+                service = %service.name,
+                backend = %backend,
+                detector = detector.as_str(),
+                seconds = time.as_secs(),
+                "backend ejected as an outlier"
+            );
+            metrics.feeds.events.send(serde_json::json!({
+                "type": "backend", "service": &*service.name, "backend": backend, "state": "down",
+                "reason": reason, "seconds": time.as_secs(),
+            }));
+            if let Some(member) = service.members().iter().find(|m| m.id == backend) {
+                crate::alerting::backend_down(metrics, service, member, reason);
+            }
+            metrics
+                .backend_ejections
+                .with_label_values(&[&*service.name, backend])
+                .inc();
+            metrics
+                .outlier_ejections
+                .with_label_values(&[&*service.name, backend, detector.as_str()])
+                .inc();
+            metrics
+                .backend_up
+                .with_label_values(&[&*service.name, backend])
+                .set(0);
+        }
+        Ejection::Refused => tracing::warn!(
+            service = %service.name,
+            backend = %backend,
+            detector = detector.as_str(),
+            "backend is an outlier, but max_ejection_percent of the pool is already ejected"
+        ),
+        Ejection::None => {}
+    }
+}
+
+/// `retries.per_try_timeout` when it applies to the attempt about to start (ADR-0031): the
+/// request may be retried on a timeout (attempts left, an idempotent method or
+/// `retry_non_idempotent`, not an upgrade, a body Pingora can still replay) and a backend it
+/// has not tried is available. Otherwise the attempt is the last one and waits
+/// `timeouts.read`.
+///
+/// Pingora 0.9 sets the read timeout of an attempt once, from the peer, and applies it to every
+/// read: the response headers and each read of the body (`proxy_h1.rs`, `proxy_h2.rs`). No hook
+/// reaches the upstream session after the headers, so the bound also covers pauses in the body
+/// of such an attempt.
+fn per_try_timeout(
+    session: &Session,
+    ctx: &RequestCtx,
+    service: &ServiceRuntime,
+) -> Option<Duration> {
+    let retries = service.retries.as_ref()?;
+    let per_try = retries.per_try_timeout?.as_std();
+    let req = session.req_header();
+    let retryable = retries.on.contains(&RetryOn::Timeout)
+        && ctx.retries < retries.attempts
+        && (retries.retry_non_idempotent || req.method.is_idempotent())
+        && !is_upgrade(req)
+        && !session.as_ref().retry_buffer_truncated();
+    (retryable && upstream::has_untried(service, &ctx.tried)).then_some(per_try)
+}
+
 fn is_upgrade(req: &RequestHeader) -> bool {
     req.headers.contains_key(http::header::UPGRADE) || req.method == http::Method::CONNECT
 }
@@ -1912,7 +2238,7 @@ pub(crate) fn backend_authority(
         Candidate::Tcp { host, addr } => {
             let default = matches!(
                 (scheme, addr.port()),
-                (Scheme::Https, 443) | (Scheme::Http | Scheme::H2c, 80)
+                (Scheme::Https | Scheme::H3, 443) | (Scheme::Http | Scheme::H2c, 80)
             );
             if default {
                 host.clone()

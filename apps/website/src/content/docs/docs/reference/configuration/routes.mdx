@@ -2,7 +2,7 @@
 title: routes
 description: "HTTP routes: which requests go to which service, through which middlewares."
 sidebar:
-  order: 12
+  order: 16
 ---
 
 import Status from '../../../../../components/Status.astro';
@@ -80,6 +80,16 @@ The service that receives the copies (`name` or `name@provider`).
 **Type:** `integer` · **Default:** `0`
 
 Higher priorities are evaluated first. `0` uses the rule length, like Traefik.
+
+## `routes.<name>.priority_class`
+
+**Type:** `critical` · `normal` · `sheddable`
+
+Which requests an `admission` middleware sheds first under overload: `sheddable`, then `normal` (the default), `critical` last. Unrelated to `priority`, which orders matching.
+
+- `critical`: Shed last: may fill the whole limit.
+- `normal`: The default: may fill `shares.normal` of the limit.
+- `sheddable`: Shed first: may fill `shares.sheddable` of the limit.
 
 ## `routes.<name>.service`
 

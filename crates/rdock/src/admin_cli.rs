@@ -62,6 +62,9 @@ pub(crate) struct UserAdd {
     /// `viewer`, `operator` or `admin`.
     #[arg(long, default_value = "viewer")]
     role: String,
+    /// Scope the user to this tenant (`tenants.<name>`).
+    #[arg(long)]
+    tenant: Option<String>,
     #[command(flatten)]
     ctl: CtlArgs,
 }
@@ -71,6 +74,12 @@ pub(crate) struct UserSet {
     name: String,
     #[arg(long)]
     role: Option<String>,
+    /// Scope the user to this tenant.
+    #[arg(long, conflicts_with = "no_tenant")]
+    tenant: Option<String>,
+    /// Remove the user's tenant scope.
+    #[arg(long)]
+    no_tenant: bool,
     /// Turn the user off: no login, sessions end, tokens stop working.
     #[arg(long, conflicts_with = "enable")]
     disable: bool,
@@ -109,6 +118,9 @@ pub(crate) struct TokenCreate {
     /// A network it may be used from; repeat for more.
     #[arg(long = "allow")]
     allowed_from: Vec<String>,
+    /// Scope the token to this tenant (`tenants.<name>`).
+    #[arg(long)]
+    tenant: Option<String>,
     #[command(flatten)]
     ctl: CtlArgs,
 }
@@ -163,6 +175,24 @@ pub(crate) struct ConsumerQuota {
 pub(crate) struct ConsumerQuotaReset {
     name: String,
     /// Only in this `quota` middleware.
+    #[arg(long)]
+    middleware: Option<String>,
+    #[command(flatten)]
+    ctl: CtlArgs,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum BansCommand {
+    /// List the keys banned on this instance now.
+    List(CtlArgs),
+    /// Lift a ban (the key as `rdock bans list` prints it).
+    Remove(BanRemove),
+}
+
+#[derive(Args)]
+pub(crate) struct BanRemove {
+    key: String,
+    /// Only in this `abuse` middleware.
     #[arg(long)]
     middleware: Option<String>,
     #[command(flatten)]
@@ -430,8 +460,11 @@ pub(crate) fn users(command: &UsersCommand) -> anyhow::Result<ExitCode> {
             }))
         }
         UsersCommand::Add(args) => {
-            let body =
+            let mut body =
                 json!({ "name": args.name, "role": args.role, "password": read_password()? });
+            if let Some(tenant) = &args.tenant {
+                body["tenant"] = json!(tenant);
+            }
             expect(
                 call(&args.ctl, &Call::new("POST", "/api/v1/users").json(&body))?,
                 &[201],
@@ -445,6 +478,11 @@ pub(crate) fn users(command: &UsersCommand) -> anyhow::Result<ExitCode> {
             }
             if args.disable || args.enable {
                 body["disabled"] = json!(args.disable);
+            }
+            if let Some(tenant) = &args.tenant {
+                body["tenant"] = json!(tenant);
+            } else if args.no_tenant {
+                body["tenant"] = Value::Null;
             }
             change_user(&args.ctl, &args.name, &body)
         }
@@ -490,6 +528,9 @@ pub(crate) fn tokens(command: &TokensCommand) -> anyhow::Result<ExitCode> {
                 json!({ "name": args.name, "role": args.role, "allowed_from": args.allowed_from });
             if let Some(days) = args.days {
                 body["expires_in_days"] = json!(days);
+            }
+            if let Some(tenant) = &args.tenant {
+                body["tenant"] = json!(tenant);
             }
             let answer = expect(
                 call(&args.ctl, &Call::new("POST", "/api/v1/tokens").json(&body))?,
@@ -624,6 +665,48 @@ pub(crate) fn consumers(command: &ConsumersCommand) -> anyhow::Result<ExitCode> 
             lines([format!(
                 "reset {} counter(s)",
                 text(&answer.json()["reset"])
+            )])
+        }
+    }
+}
+
+pub(crate) fn bans(command: &BansCommand) -> anyhow::Result<ExitCode> {
+    match command {
+        BansCommand::List(ctl) => {
+            let answer = expect(call(ctl, &Call::new("GET", "/api/v1/abuse/bans"))?, &[200])?;
+            let out: Vec<String> = answer.json()["bans"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|b| {
+                    format!(
+                        "{:<20} {:<40} until {} ({}s left)",
+                        text(&b["middleware"]),
+                        text(&b["key"]),
+                        text(&b["until"]),
+                        text(&b["remaining_seconds"])
+                    )
+                })
+                .collect();
+            if out.is_empty() {
+                return lines(["no bans".to_owned()]);
+            }
+            lines(out)
+        }
+        BansCommand::Remove(args) => {
+            let mut path = format!("/api/v1/abuse/bans/{}", segment(&args.key));
+            if let Some(m) = &args.middleware {
+                path.push_str("?middleware=");
+                path.push_str(&segment(m));
+            }
+            let answer = expect(call(&args.ctl, &Call::new("DELETE", &path))?, &[200, 404])?;
+            if answer.status == 404 {
+                bail!("no ban for `{}`", args.key);
+            }
+            lines([format!(
+                "lifted {} ban(s) of {}",
+                text(&answer.json()["removed"]),
+                args.key
             )])
         }
     }

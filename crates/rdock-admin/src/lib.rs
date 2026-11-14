@@ -1,11 +1,13 @@
 #![doc = include_str!("../README.md")]
 
+mod abuse;
 mod account;
 pub mod audit;
 mod auth;
 mod bootstrap;
 mod cache;
 mod caller;
+mod cluster;
 mod config_api;
 mod consumers;
 mod dashboard;
@@ -22,6 +24,7 @@ mod server;
 mod sessions;
 mod stream;
 mod telemetry;
+mod tenancy;
 mod tokens;
 mod totp;
 mod users;
@@ -33,8 +36,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 pub use cache::{CachePurge, PurgeOutcome};
+pub use cluster::{ClusterPublish, RolloutAction};
 pub use openapi::json as openapi_json;
-pub use server::{Running, StartError, start};
+pub use server::{Running, Sockets, StartError, start, start_with};
 
 /// What the admin API reads from and asks of the running process.
 #[async_trait]
@@ -93,6 +97,101 @@ pub trait Control: Send + Sync {
         let _ = (consumer, middleware);
         0
     }
+    /// The keys banned by `abuse` middlewares on this instance now: `{ "bans": [ { middleware,
+    /// key, since, until, remaining_seconds } ] }`.
+    async fn bans(&self) -> serde_json::Value {
+        serde_json::json!({ "bans": [] })
+    }
+    /// Lifts the ban of `key` in every `abuse` middleware, or in `middleware` only; returns
+    /// how many bans were lifted.
+    async fn unban(&self, key: String, middleware: Option<String>) -> usize {
+        let _ = (key, middleware);
+        0
+    }
+    /// The control plane's enrolled instances with their state; `None` on a data plane.
+    async fn cluster_instances(&self) -> Option<serde_json::Value> {
+        None
+    }
+    /// Revokes an enrolled instance: `Some(Ok(false))` when there is no such instance; `None`
+    /// on a data plane.
+    async fn cluster_revoke(&self, instance: String) -> Option<Result<bool, String>> {
+        let _ = instance;
+        None
+    }
+    /// Creates a join token valid for `ttl_seconds` (the configured default when `None`) on
+    /// behalf of `actor`: `token` (shown once), `id`, `expires_at`, `ca_pin`; `None` on a data
+    /// plane.
+    async fn cluster_create_token(
+        &self,
+        ttl_seconds: Option<u64>,
+        actor: String,
+    ) -> Option<Result<serde_json::Value, String>> {
+        let _ = (ttl_seconds, actor);
+        None
+    }
+    /// Published revisions, newest first; `None` on a data plane.
+    async fn cluster_revisions(&self) -> Option<serde_json::Value> {
+        None
+    }
+    /// Publishes `{ "document": … }` or `{ "rollback_to": N }` on behalf of `actor`; `None`
+    /// on a data plane.
+    async fn cluster_publish(
+        &self,
+        request: serde_json::Value,
+        actor: String,
+    ) -> Option<ClusterPublish> {
+        let _ = (request, actor);
+        None
+    }
+    /// The rollout of the newest revision; `None` on a data plane.
+    async fn cluster_rollout(&self) -> Option<serde_json::Value> {
+        None
+    }
+    /// Resumes a halted or soaking rollout on behalf of `actor`; `None` on a data plane.
+    async fn cluster_rollout_resume(&self, actor: String) -> Option<RolloutAction> {
+        let _ = actor;
+        None
+    }
+    /// Abandons a running or halted rollout on behalf of `actor` (publishes the stable
+    /// revision again); `None` on a data plane.
+    async fn cluster_rollout_abandon(&self, actor: String) -> Option<RolloutAction> {
+        let _ = actor;
+        None
+    }
+    /// The configuration's tenants (H-SEC-07), for scoping users and tokens; none by default,
+    /// which refuses every scoped caller.
+    async fn tenants(&self) -> rdock_model::tenant::Tenants {
+        rdock_model::tenant::Tenants::new()
+    }
+    /// Replaces the running binary by handing the listeners to a new process (ADR-0031);
+    /// returns once the new process serves or the attempt failed. Only offered on the Unix
+    /// socket.
+    async fn upgrade(&self, request: UpgradeRequest) -> UpgradeOutcome {
+        let _ = request;
+        UpgradeOutcome::Refused(serde_json::json!({ "error": "binary upgrades are not available" }))
+    }
+}
+
+/// A binary upgrade asked for over the admin socket (`rdock upgrade`).
+#[derive(Debug, Clone)]
+pub struct UpgradeRequest {
+    /// The binary to run; `upgrade.binary` when not given.
+    pub binary: Option<std::path::PathBuf>,
+    /// Install it even when its version is older than the running one.
+    pub allow_downgrade: bool,
+    /// Who asked, as the audit log names them.
+    pub actor: String,
+}
+
+/// How a binary upgrade ended.
+#[derive(Debug, Clone)]
+pub enum UpgradeOutcome {
+    /// The new process serves; this one drains. The document describes it.
+    Serving(serde_json::Value),
+    /// Not attempted (a check failed, or another upgrade runs); nothing changed.
+    Refused(serde_json::Value),
+    /// Attempted and rolled back: this process serves on.
+    Failed(serde_json::Value),
 }
 
 /// The outcome of a conditional write of the API provider's objects.
@@ -205,7 +304,7 @@ struct State {
     /// `/metrics` answers without a token (loopback listener and the setting on).
     metrics_open: bool,
     trust_forwarded: bool,
-    audit: audit::Audit,
+    audit: Arc<audit::Audit>,
     api_writes: bool,
     logs: Arc<stream::Hub>,
     events: Arc<stream::Hub>,

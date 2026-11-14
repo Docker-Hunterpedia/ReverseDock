@@ -204,6 +204,30 @@ pub fn clienthello(data: &[u8]) {
     }
 }
 
+/// Computes the TLS client fingerprints of arbitrary bytes. Never panics; facts exist only for
+/// a complete ClientHello that `parse` accepts; JA4 always has its fixed shape (36 characters,
+/// three `_`-separated sections) and JA3 is 32 hex digits.
+pub fn tls_fingerprint(data: &[u8]) {
+    use rdock_tls::clienthello::{MAX_EXTENSIONS, Parsed, facts, parse};
+    use rdock_tls::fingerprint::{Transport, ja3, ja4};
+    let Some(found) = facts(data) else {
+        return;
+    };
+    assert!(
+        matches!(parse(data), Ok(Parsed::Hello { .. })),
+        "facts without an accepted hello"
+    );
+    assert!(found.extensions.len() <= MAX_EXTENSIONS);
+    for transport in [Transport::Tcp, Transport::Quic, Transport::Dtls] {
+        let fp = ja4(&found, transport);
+        assert_eq!(fp.len(), 36, "{fp}");
+        assert_eq!(fp.matches('_').count(), 2, "{fp}");
+        assert!(fp.is_ascii(), "{fp}");
+    }
+    let j = ja3(&found);
+    assert!(j.len() == 32 && j.bytes().all(|b| b.is_ascii_hexdigit()));
+}
+
 /// Treats `data` as a pointer and as `patch \0 document` (both JSON). Pointers that parse
 /// round-trip through escaping; a patch that applies gives the same result twice; a check that
 /// passes without a document never makes `apply` panic.
@@ -250,6 +274,94 @@ pub fn json_patch(data: &[u8]) {
     }
 }
 
+/// The HTTP/3 frame limits (ADR-0032, review fix H1) on the same bytes read as a stream: the
+/// verdict does not depend on how the stream is cut into chunks, the connection's budget never
+/// holds more than its limit, and everything a guard reserved is released when it goes.
+fn http3_frames(data: &[u8], max_header_size: u64) {
+    use rdock_proxy::http3::frames::{Budget, FrameGuard, StreamKind};
+    use std::sync::Arc;
+    let cut = data.first().map_or(0, |b| usize::from(*b) % (data.len() + 1));
+    for kind in [StreamKind::Request, StreamKind::Unidirectional] {
+        let budget = Arc::new(Budget::new(max_header_size * 2));
+        let mut whole = FrameGuard::new(kind, max_header_size, Some(budget.clone()));
+        let one = whole.inspect(data);
+        assert!(budget.held() <= max_header_size * 2, "the budget holds");
+        let mut split = FrameGuard::new(kind, max_header_size, None);
+        let two = split
+            .inspect(&data[..cut])
+            .and_then(|()| split.inspect(&data[cut..]));
+        // A budget can only refuse more; without its refusal the verdicts agree.
+        if !matches!(one, Err(rdock_proxy::http3::frames::Violation::OverBudget { .. })) {
+            assert_eq!(one, two, "the verdict depends on the chunks");
+        }
+        drop(whole);
+        assert_eq!(budget.held(), 0, "a dropped guard releases its reservation");
+    }
+}
+
+/// The HTTP/3 request mapping (ADR-0032) on arbitrary HEADERS payloads: decoding and validation
+/// never panic; a section that decodes re-encodes to the same fields; and a request that passes
+/// is forwarded as exactly one HTTP/1.1 request head that an independent parser reads back with
+/// the same method, target and fields (no smuggling through the HTTP/3 to HTTP/1 translation).
+pub fn http3_request(data: &[u8]) {
+    use rdock_proxy::http3::request::{FIELD_OVERHEAD, decode, encode, map};
+    const LIMIT: u64 = 64 * 1024;
+    http3_frames(data, LIMIT);
+    if let Ok(fields) = decode(data, LIMIT) {
+        let pairs: Vec<(&[u8], &[u8])> = fields
+            .iter()
+            .map(|f| (f.name.as_ref(), f.value.as_ref()))
+            .collect();
+        let again = decode(&encode::section(&pairs), LIMIT).expect("a decoded section re-encodes");
+        assert_eq!(again, fields, "decode . encode . decode is decode");
+        let size: u64 = fields
+            .iter()
+            .map(|f| f.name.len() as u64 + f.value.len() as u64 + FIELD_OVERHEAD)
+            .sum();
+        assert!(size <= LIMIT, "the limit holds");
+    }
+    let Ok(mapped) = map(data, LIMIT) else {
+        return;
+    };
+    let req = &mapped.header;
+    assert_eq!(req.version, http::Version::HTTP_3);
+    assert_ne!(req.method, http::Method::CONNECT);
+    let host = req.headers.get("host").expect("a mapped request has a host");
+    assert!(!host.as_bytes().contains(&b'@'));
+    for name in [
+        "connection",
+        "keep-alive",
+        "proxy-connection",
+        "transfer-encoding",
+        "upgrade",
+    ] {
+        assert!(!req.headers.contains_key(name), "{name} passed");
+    }
+    assert!(req.headers.get_all("cookie").iter().count() <= 1);
+    assert!(req.headers.get_all("content-length").iter().count() <= 1);
+    let mut wire = Vec::new();
+    wire.extend_from_slice(req.method.as_str().as_bytes());
+    wire.push(b' ');
+    wire.extend_from_slice(req.raw_path());
+    wire.extend_from_slice(b" HTTP/1.1\r\n");
+    let mut headers = bytes::BytesMut::new();
+    req.header_to_h1_wire(&mut headers);
+    wire.extend_from_slice(&headers);
+    wire.extend_from_slice(b"\r\n");
+    let mut slots = [httparse::EMPTY_HEADER; 4096];
+    let mut parsed = httparse::Request::new(&mut slots);
+    let status = parsed.parse(&wire).unwrap_or_else(|e| {
+        panic!(
+            "the forwarded head does not parse ({e}): {:?}",
+            String::from_utf8_lossy(&wire)
+        )
+    });
+    assert_eq!(status, httparse::Status::Complete(wire.len()), "one complete head");
+    assert_eq!(parsed.method, Some(req.method.as_str()));
+    assert_eq!(parsed.path.map(str::as_bytes), Some(req.raw_path()));
+    assert_eq!(parsed.headers.len(), req.headers.len(), "no field split or lost");
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -266,6 +378,59 @@ mod tests {
             .iter()
             .map(|f| std::fs::read(f).expect("seed"))
             .collect()
+    }
+
+    #[test]
+    fn http3_request_seeds() {
+        let all = seeds("http3_request");
+        assert!(all.len() >= 5, "seed corpus present");
+        for seed in all {
+            assert!(
+                rdock_proxy::http3::request::map(&seed, 64 * 1024).is_ok(),
+                "every seed is a valid request head"
+            );
+            for cut in 0..=seed.len() {
+                super::http3_request(&seed[..cut]);
+            }
+        }
+    }
+
+    /// The input the fuzzer crashed on in CI: an integer with 88 continuation bytes that add
+    /// nothing. It is refused, not a valid head, so it is not in the seed corpus.
+    #[test]
+    fn http3_request_refuses_an_overlong_integer() {
+        let input = [vec![0, 0xff], vec![0x80; 88], vec![0xff]].concat();
+        super::http3_request(&input);
+        assert!(rdock_proxy::http3::request::map(&input, 64 * 1024).is_err());
+    }
+
+    /// A deterministic mutation smoke run on stable (the real fuzzing needs nightly).
+    #[test]
+    fn http3_request_mutations() {
+        let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for seed in seeds("http3_request") {
+            for _ in 0..5_000 {
+                let mut data = seed.clone();
+                for _ in 0..=(next() % 4) {
+                    let at = usize::try_from(next()).unwrap_or(0) % (data.len() + 1);
+                    match next() % 3 {
+                        0 if at < data.len() => data[at] = u8::try_from(next() & 0xff).unwrap_or(0),
+                        1 => data.insert(at, u8::try_from(next() & 0xff).unwrap_or(0)),
+                        _ if at < data.len() => {
+                            data.remove(at);
+                        }
+                        _ => {}
+                    }
+                }
+                super::http3_request(&data);
+            }
+        }
     }
 
     #[test]
@@ -289,7 +454,12 @@ mod tests {
             );
             for cut in 0..=seed.len() {
                 super::clienthello(&seed[..cut]);
+                super::tls_fingerprint(&seed[..cut]);
             }
+            assert!(
+                rdock_tls::clienthello::facts(&seed).is_some(),
+                "every seed has a fingerprint"
+            );
         }
     }
 

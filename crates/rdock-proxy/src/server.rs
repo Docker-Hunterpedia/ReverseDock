@@ -9,6 +9,7 @@ use std::time::Duration;
 use arc_swap::ArcSwap;
 use rdock_middleware::HttpClient;
 use rdock_model::Config;
+use rdock_model::config::ListenerSocket;
 use rdock_model::values::ListenAddress;
 use rdock_observability::Metrics;
 use rdock_tls::{CertIndex, SniResolver};
@@ -68,12 +69,27 @@ struct State {
     /// since the sessions' replies leave from it, until the drain ends or a later reload needs
     /// the port for another `udp` listener (their sessions then end at once).
     draining: Vec<Stopping>,
+    /// The HTTP/3 sides of `https` listeners with `http3.enabled`, by listener name.
+    #[cfg(feature = "http3")]
+    http3: BTreeMap<String, Http3Entry>,
+}
+
+/// A running HTTP/3 side and what it was last configured with.
+#[cfg(feature = "http3")]
+struct Http3Entry {
+    side: crate::http3::endpoint::Side,
+    applied: (
+        ListenerTls,
+        rdock_model::config::ListenerHttp3,
+        rdock_model::config::ListenerTimeouts,
+    ),
 }
 
 /// Sockets and acceptors made ready before a configuration is published.
 #[derive(Default)]
 struct Prepared {
-    sockets: BTreeMap<String, listener::Socket>,
+    /// New sockets with the options they have.
+    sockets: BTreeMap<String, (listener::Socket, ListenerSocket)>,
     acceptors: BTreeMap<String, Arc<pingora::listeners::tls::Acceptor>>,
     /// New listener → the running listener whose socket it takes over: same address and
     /// transport, given up by this reload (removed, or moved to another address).
@@ -89,6 +105,10 @@ struct Wanted {
     proxy_protocol: Option<rdock_model::config::ProxyProtocolIn>,
     protocol: rdock_model::config::ListenerProtocol,
     starttls: Option<rdock_model::config::StartTls>,
+    socket: ListenerSocket,
+    max_handshakes: Option<u32>,
+    http2: rdock_model::config::ListenerHttp2,
+    fingerprint: Option<rdock_model::config::TlsFingerprint>,
 }
 
 /// The data plane.
@@ -104,9 +124,47 @@ pub struct DataPlane {
     live: Arc<rdock_observability::live::Live>,
     caches: rdock_cache::Registry,
     quotas: Arc<rdock_limits::quota::QuotaRegistry>,
+    abuse: Arc<rdock_limits::abuse::AbuseRegistry>,
+    shared_limits: rdock_limits::shared::SharedLimits,
     plugins: Arc<rdock_plugin_api::Registry>,
     state: Mutex<State>,
     generation: AtomicU64,
+    /// TLS resumption per security class, for the life of the process (H-PERF-02).
+    tickets: Arc<rdock_tls::TicketRegistry>,
+    /// Listening sockets handed over by the previous process in a binary upgrade, taken by the
+    /// listeners with the same address and transport instead of binding.
+    inherited: std::sync::Mutex<Vec<InheritedSocket>>,
+    /// Quota counters are not written while another process is the writer (binary upgrade).
+    quota_writes_paused: Arc<std::sync::atomic::AtomicBool>,
+    /// The keys of HTTP/3 stateless resets and Retry tokens (ADR-0032).
+    #[cfg(feature = "http3")]
+    quic_keys: Arc<crate::http3::endpoint::QuicKeys>,
+}
+
+/// A listening socket received from the previous process (binary upgrade).
+#[derive(Debug)]
+pub struct InheritedSocket {
+    /// The address it is bound to.
+    pub address: ListenAddress,
+    /// The socket, TCP or UDP.
+    pub socket: listener::Socket,
+    /// The options it was bound (or last updated) with in the previous process.
+    pub options: ListenerSocket,
+}
+
+/// A running listener's socket, to hand to the next process (binary upgrade).
+#[derive(Debug)]
+pub struct ListenerHandle {
+    /// Listener name.
+    pub name: String,
+    /// Bind address.
+    pub address: ListenAddress,
+    /// A UDP socket.
+    pub udp: bool,
+    /// The options the socket has.
+    pub options: ListenerSocket,
+    /// A duplicate of its descriptor (the same open socket).
+    pub fd: std::os::fd::OwnedFd,
 }
 
 impl std::fmt::Debug for DataPlane {
@@ -137,6 +195,11 @@ impl DataPlane {
                 client: client.clone(),
                 in_flight: Arc::default(),
                 spool: std::sync::OnceLock::new(),
+                accepting: tokio::sync::watch::Sender::new(true),
+                open_connections: std::sync::atomic::AtomicU64::new(0),
+                cache_bypass: std::sync::atomic::AtomicBool::new(false),
+                #[cfg(feature = "http3")]
+                alt_svc: ArcSwap::default(),
             }),
             resolver,
             dns: Arc::new(Dns::default()),
@@ -148,13 +211,125 @@ impl DataPlane {
             live: Arc::default(),
             caches,
             quotas: Arc::default(),
+            abuse: Arc::default(),
+            shared_limits: rdock_limits::shared::SharedLimits::default(),
             plugins: Arc::default(),
             state: Mutex::new(State {
                 running: BTreeMap::new(),
                 draining: Vec::new(),
+                #[cfg(feature = "http3")]
+                http3: BTreeMap::new(),
             }),
             generation: AtomicU64::new(0),
+            tickets: Arc::default(),
+            inherited: std::sync::Mutex::new(Vec::new()),
+            quota_writes_paused: Arc::default(),
+            #[cfg(feature = "http3")]
+            quic_keys: Arc::new(crate::http3::endpoint::QuicKeys::random()),
         }
+    }
+
+    /// Signs HTTP/3 stateless resets and Retry tokens with `keys` (from the data directory)
+    /// instead of keys that live only as long as the process (ADR-0032).
+    #[cfg(feature = "http3")]
+    #[must_use]
+    pub fn with_quic_keys(mut self, keys: crate::http3::endpoint::QuicKeys) -> Self {
+        self.quic_keys = Arc::new(keys);
+        self
+    }
+
+    /// Sockets handed over by the previous process; the next `apply` gives each to the listener
+    /// with the same address and transport. Call before the first `apply`.
+    pub fn inherit(&self, sockets: Vec<InheritedSocket>) {
+        self.inherited
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .extend(sockets);
+    }
+
+    /// Closes the handed-over sockets no listener took (the configuration no longer has them).
+    pub fn drop_unclaimed(&self) -> usize {
+        let mut inherited = self
+            .inherited
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let n = inherited.len();
+        inherited.clear();
+        n
+    }
+
+    fn take_inherited(
+        &self,
+        address: &ListenAddress,
+        udp: bool,
+    ) -> Option<(listener::Socket, ListenerSocket)> {
+        let mut inherited = self
+            .inherited
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let i = inherited.iter().position(|s| {
+            s.address == *address && matches!(s.socket, listener::Socket::Udp(_)) == udp
+        })?;
+        let taken = inherited.swap_remove(i);
+        Some((taken.socket, taken.options))
+    }
+
+    /// Duplicates of every running listener's socket, for the next process (binary upgrade).
+    ///
+    /// # Errors
+    ///
+    /// A socket has no handle (it could not be duplicated when the listener started).
+    pub async fn listener_handles(&self) -> Result<Vec<ListenerHandle>, String> {
+        let state = self.state.lock().await;
+        let mut out = Vec::new();
+        for (name, (running, _)) in &state.running {
+            let (fd, options) = running
+                .handle()
+                .ok_or_else(|| format!("listener `{name}` has no socket handle"))?;
+            out.push(ListenerHandle {
+                name: name.clone(),
+                address: running.address,
+                udp: running.udp,
+                options,
+                fd,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Starts or stops accepting new connections on every listener (and reading datagrams on
+    /// `udp` listeners). Paused, connections wait in the listen backlog.
+    pub fn set_accepting(&self, accepting: bool) {
+        self.shared.accepting.send_replace(accepting);
+    }
+
+    /// Serves without the HTTP caches (the old process during a binary upgrade), or with them
+    /// again.
+    pub fn set_cache_bypass(&self, bypass: bool) {
+        self.shared
+            .cache_bypass
+            .store(bypass, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Client connections open on TCP listeners.
+    #[must_use]
+    pub fn open_connections(&self) -> u64 {
+        self.shared
+            .open_connections
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Stops or resumes writing quota counters (another process is the writer meanwhile).
+    pub fn pause_quota_writes(&self, paused: bool) {
+        self.quota_writes_paused
+            .store(paused, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// TLS ticket keys and session caches, by security class: exported to the next process in
+    /// a binary upgrade and imported there before the first configuration is applied.
+    #[must_use]
+    pub fn tickets(&self) -> &Arc<rdock_tls::TicketRegistry> {
+        &self.tickets
     }
 
     /// Opens the spool directory for held request bodies (`<data dir>/spool`) and removes the
@@ -180,6 +355,7 @@ impl DataPlane {
     pub fn set_quota_dir(&self, dir: std::path::PathBuf) {
         self.quotas.set_dir(dir);
         let quotas = Arc::downgrade(&self.quotas);
+        let paused = self.quota_writes_paused.clone();
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(1));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -188,10 +364,52 @@ impl DataPlane {
                 let Some(quotas) = quotas.upgrade() else {
                     return;
                 };
+                if paused.load(std::sync::atomic::Ordering::SeqCst) {
+                    continue;
+                }
                 // File writes stay off the request threads' runtime workers.
                 let _ = tokio::task::spawn_blocking(move || quotas.flush_due()).await;
             }
         });
+    }
+
+    /// Writes abuse bans under `dir` (`<data dir>/abuse`) and starts writing changed ban lists
+    /// every second (paused with the quota writes). Call once, inside the runtime.
+    pub fn set_abuse_dir(&self, dir: std::path::PathBuf) {
+        self.abuse.set_dir(dir);
+        let abuse = Arc::downgrade(&self.abuse);
+        let paused = self.quota_writes_paused.clone();
+        let metrics = self.shared.metrics.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(1));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                let Some(abuse) = abuse.upgrade() else {
+                    return;
+                };
+                metrics
+                    .abuse_bans
+                    .set(i64::try_from(abuse.count()).unwrap_or(i64::MAX));
+                if paused.load(std::sync::atomic::Ordering::SeqCst) {
+                    continue;
+                }
+                let _ = tokio::task::spawn_blocking(move || abuse.flush_all()).await;
+            }
+        });
+    }
+
+    /// The budgets of cluster-scoped limits (`scope: cluster`), which the cluster's limit
+    /// driver shares.
+    #[must_use]
+    pub fn shared_limits(&self) -> &rdock_limits::shared::SharedLimits {
+        &self.shared_limits
+    }
+
+    /// The abuse counters and bans, for the admin API (list and unban).
+    #[must_use]
+    pub fn abuse(&self) -> &Arc<rdock_limits::abuse::AbuseRegistry> {
+        &self.abuse
     }
 
     /// The quota counters, for the admin API (read and reset).
@@ -275,6 +493,8 @@ impl DataPlane {
                 plugins: &self.plugins,
                 metrics: Some(&self.shared.metrics),
                 quotas: Some(&self.quotas),
+                abuse: Some(&self.abuse),
+                shared_limits: Some(&self.shared_limits),
             },
         )
     }
@@ -304,6 +524,8 @@ impl DataPlane {
         take_over(&mut state, &mut prepared, &runtime, drain).await?;
         let wanted = self.publish(runtime);
         let stopping = self.reconcile(&mut state, wanted, prepared);
+        #[cfg(feature = "http3")]
+        self.sync_http3(&mut state, drain);
         for old in stopping {
             let mut old = old.stop(drain);
             if old.udp {
@@ -331,12 +553,12 @@ impl DataPlane {
             if let Some(tls) = &listener.tls
                 && !(same_address && running.is_some_and(|(_, p)| p.as_ref() == Some(tls)))
             {
-                let acceptor = listener::acceptor(tls, self.resolver.for_listener(name)).map_err(
-                    |message| ApplyError::Tls {
-                        name: name.clone(),
-                        message,
-                    },
-                )?;
+                let acceptor =
+                    listener::acceptor(tls, self.resolver.for_listener(name), &self.tickets)
+                        .map_err(|message| ApplyError::Tls {
+                            name: name.clone(),
+                            message,
+                        })?;
                 prepared.acceptors.insert(name.clone(), Arc::new(acceptor));
             }
             if same_address {
@@ -356,19 +578,54 @@ impl DataPlane {
                 protocol: listener.protocol,
                 source,
             };
-            let socket = match listener::Socket::bind(&listener.address, listener.protocol) {
+            let options = &listener.socket;
+            if let Some((socket, had)) = self.take_inherited(&listener.address, udp) {
+                // The socket keeps what was set before `bind`; the rest follows this listener.
+                let control = socket.control().map_err(bind_error)?;
+                listener::update_running(&control, udp, &had, options).map_err(bind_error)?;
+                let kept = ListenerSocket {
+                    reuse_port: had.reuse_port,
+                    ipv6_only: had.ipv6_only,
+                    ..*options
+                };
+                tracing::info!(listener = %name, address = %listener.address, "adopted the socket handed over by the previous process");
+                prepared.sockets.insert(name.clone(), (socket, kept));
+                continue;
+            }
+            let socket = match listener::Socket::bind(&listener.address, listener.protocol, options)
+            {
                 Ok(socket) => socket,
                 Err(err)
                     if udp
                         && err.kind() == std::io::ErrorKind::AddrInUse
                         && end_draining_on(state, listener.address.port()).await =>
                 {
-                    listener::Socket::bind(&listener.address, listener.protocol)
+                    listener::Socket::bind(&listener.address, listener.protocol, options)
                         .map_err(bind_error)?
                 }
                 Err(err) => return Err(bind_error(err)),
             };
-            prepared.sockets.insert(name.clone(), socket);
+            prepared.sockets.insert(name.clone(), (socket, *options));
+        }
+        // Every bind succeeded: listeners that keep their socket get the options that can
+        // change in place (backlog, buffers, Fast Open). Options set before `bind`
+        // (`reuse_port`, `ipv6_only`) keep their running value until the address changes or
+        // rdock restarts; the engine's reload report says so.
+        for (name, listener) in &runtime.listeners {
+            let udp = listener.protocol == rdock_model::config::ListenerProtocol::Udp;
+            if let Some((running, _)) = state.running.get_mut(name)
+                && running.address == listener.address
+                && running.udp == udp
+            {
+                running
+                    .update_socket(&listener.socket)
+                    .map_err(|source| ApplyError::Bind {
+                        name: name.clone(),
+                        address: listener.address,
+                        protocol: listener.protocol,
+                        source,
+                    })?;
+            }
         }
         Ok(prepared)
     }
@@ -422,6 +679,10 @@ impl DataPlane {
                 proxy_protocol: l.proxy_protocol.clone(),
                 protocol: l.protocol,
                 starttls: l.starttls,
+                socket: l.socket,
+                max_handshakes: l.max_handshakes,
+                http2: l.http2,
+                fingerprint: l.fingerprint.clone(),
             })
             .collect();
         let generation = runtime.generation;
@@ -466,12 +727,25 @@ impl DataPlane {
                     .and_then(|(r, _)| r.settings.load().tls.clone()),
                 (None, _) => None,
             };
+            // An unchanged bound keeps its semaphore, so handshakes in progress stay counted.
+            let handshakes = w.max_handshakes.map(|limit| {
+                state
+                    .running
+                    .get(&w.name)
+                    .and_then(|(r, _)| r.settings.load().handshakes.clone())
+                    .filter(|current| current.limit() == limit)
+                    .unwrap_or_else(|| listener::Handshakes::new(limit))
+            });
             let settings = Settings {
                 tls,
                 timeouts: w.timeouts,
                 proxy_protocol: w.proxy_protocol,
                 protocol: w.protocol,
                 starttls: w.starttls,
+                connection: listener::ConnectionOptions::of(&w.socket),
+                handshakes,
+                http2: w.http2,
+                fingerprint: w.fingerprint,
             };
             if let Some(socket) = prepared.sockets.remove(&w.name) {
                 let running = Running::start(
@@ -486,11 +760,82 @@ impl DataPlane {
                     stopping.push(old);
                 }
             } else if let Some((running, stored)) = state.running.get_mut(&w.name) {
+                running.update_engine(&w.name, &w.http2, &w.timeouts, &self.shared);
                 running.settings.store(Arc::new(settings));
                 *stored = w.tls;
             }
         }
         stopping
+    }
+
+    /// Starts, updates and stops the HTTP/3 sides to match the served configuration. A side
+    /// that stops sends GOAWAY and drains in the background; one that starts on an address a
+    /// stopping side still holds binds once it is free.
+    #[cfg(feature = "http3")]
+    fn sync_http3(&self, state: &mut State, drain: Duration) {
+        use crate::http3::endpoint::{Side, SideConfig};
+        let runtime = self.runtime();
+        let wanted = |name: &str| {
+            let l = runtime.listeners.get(name)?;
+            let running = &state.running.get(name)?.0;
+            (l.http3.is_some() && l.tls.is_some() && running.address == l.address).then_some(l)
+        };
+        let gone: Vec<String> = state
+            .http3
+            .iter()
+            .filter(|(name, entry)| wanted(name).is_none_or(|l| l.address != entry.side.address))
+            .map(|(name, _)| name.clone())
+            .collect();
+        for name in gone {
+            if let Some(entry) = state.http3.remove(&name) {
+                tracing::info!(listener = %name, "stopping HTTP/3: GOAWAY, then drain");
+                drop(entry.side.stop(drain));
+            }
+        }
+        for (name, l) in &runtime.listeners {
+            let (Some(h3), Some(tls)) = (&l.http3, &l.tls) else {
+                continue;
+            };
+            let Some(engine) = state.running.get(name).and_then(|(r, _)| r.engine()) else {
+                continue;
+            };
+            let applied = (tls.clone(), h3.clone(), l.timeouts);
+            if state.http3.get(name).is_some_and(|e| e.applied == applied) {
+                continue;
+            }
+            let config = match crate::listener::quic_tls(
+                tls,
+                self.resolver.for_listener(name),
+                &self.tickets,
+            ) {
+                Ok(tls) => SideConfig {
+                    settings: h3.clone(),
+                    tls,
+                    timeouts: l.timeouts,
+                },
+                Err(err) => {
+                    tracing::error!(listener = %name, error = %err, "cannot build the TLS configuration of HTTP/3");
+                    continue;
+                }
+            };
+            if let Some(entry) = state.http3.get_mut(name) {
+                entry.side.update(config);
+                entry.applied = applied;
+                continue;
+            }
+            tracing::warn!(listener = %name, "HTTP/3 is experimental (ADR-0032)");
+            let side = Side::start(
+                Arc::from(name.as_str()),
+                l.address,
+                config,
+                self.quic_keys.clone(),
+                engine,
+                self.shared.clone(),
+            );
+            state
+                .http3
+                .insert(name.clone(), Http3Entry { side, applied });
+        }
     }
 
     /// Keeps backend names resolved until `stop` fires.
@@ -505,6 +850,21 @@ impl DataPlane {
 
     /// Stops every listener, letting open requests finish for up to `drain`.
     pub async fn shutdown(&self, drain: Duration) {
+        self.stop_listeners(drain, drain, true).await;
+    }
+
+    /// Stops every listener: TCP connections may finish for up to `drain`, UDP sessions for up
+    /// to `udp_drain`. With `flush_quotas`, the quota counters are written at the end (not when
+    /// another process has taken over as their writer).
+    pub async fn stop_listeners(&self, drain: Duration, udp_drain: Duration, flush_quotas: bool) {
+        #[cfg(feature = "http3")]
+        let sides: Vec<_> = {
+            let mut state = self.state.lock().await;
+            std::mem::take(&mut state.http3)
+                .into_values()
+                .map(|e| e.side.stop(drain))
+                .collect()
+        };
         let (running, draining): (Vec<Running>, Vec<Stopping>) = {
             let mut state = self.state.lock().await;
             (
@@ -516,16 +876,52 @@ impl DataPlane {
             )
         };
         let mut tasks = tokio::task::JoinSet::new();
+        #[cfg(feature = "http3")]
+        for side in sides {
+            tasks.spawn(async move {
+                let _ = side.await;
+            });
+        }
         for listener in running {
+            let drain = if listener.udp { udp_drain } else { drain };
             tasks.spawn(listener.stop(drain).finished());
         }
-        for listener in draining {
+        for mut listener in draining {
+            if udp_drain.is_zero() {
+                listener.end_now().await;
+            }
             tasks.spawn(listener.finished());
         }
         while tasks.join_next().await.is_some() {}
+        if !flush_quotas {
+            return;
+        }
         // Requests are over: what the quotas counted is final for this run.
         let quotas = self.quotas.clone();
         let _ = tokio::task::spawn_blocking(move || quotas.flush_all()).await;
+        let abuse = self.abuse.clone();
+        let _ = tokio::task::spawn_blocking(move || abuse.flush_all()).await;
+    }
+
+    /// Listeners whose running socket kept an option that is set before `bind` and that the
+    /// served configuration changed: (listener, `reuse_port` or `ipv6_only`).
+    pub async fn kept_socket_options(&self) -> Vec<(String, &'static str)> {
+        let runtime = self.runtime();
+        let state = self.state.lock().await;
+        let mut out = Vec::new();
+        for (name, (running, _)) in &state.running {
+            let (Some(wanted), Some(has)) = (runtime.listeners.get(name), running.socket_options())
+            else {
+                continue;
+            };
+            if wanted.socket.reuse_port != has.reuse_port {
+                out.push((name.clone(), "reuse_port"));
+            }
+            if wanted.socket.ipv6_only != has.ipv6_only {
+                out.push((name.clone(), "ipv6_only"));
+            }
+        }
+        out
     }
 
     /// Listeners currently serving.
@@ -591,28 +987,44 @@ async fn take_over(
     drain: Duration,
 ) -> Result<(), ApplyError> {
     for (new, old) in std::mem::take(&mut prepared.hand_offs) {
-        let Some(protocol) = runtime.listeners.get(&new).map(|l| l.protocol) else {
+        let Some((protocol, options)) = runtime.listeners.get(&new).map(|l| (l.protocol, l.socket))
+        else {
             continue;
         };
         let Some((running, _)) = state.running.remove(&old) else {
             continue;
         };
         let address = running.address;
+        let udp = running.udp;
+        let had = running.socket_options().copied();
         tracing::info!(listener = %new, from = %old, %address, "taking over the socket of a replaced listener");
         let (socket, stopping) = running.hand_off(drain).await;
         tokio::spawn(stopping.finished());
-        let socket = match socket {
-            Some(socket) => socket,
-            None => {
-                listener::Socket::bind(&address, protocol).map_err(|source| ApplyError::Bind {
-                    name: new.clone(),
-                    address,
-                    protocol,
-                    source,
-                })?
-            }
+        let bind_error = |source| ApplyError::Bind {
+            name: new.clone(),
+            address,
+            protocol,
+            source,
         };
-        prepared.sockets.insert(new, socket);
+        let taken = match (socket, had) {
+            // The socket keeps what was set before `bind`; the rest follows the new listener.
+            (Some(socket), Some(had)) => {
+                let control = socket.control().map_err(bind_error)?;
+                listener::update_running(&control, udp, &had, &options).map_err(bind_error)?;
+                let kept = ListenerSocket {
+                    reuse_port: had.reuse_port,
+                    ipv6_only: had.ipv6_only,
+                    ..options
+                };
+                (socket, kept)
+            }
+            (Some(socket), None) => (socket, options),
+            (None, _) => (
+                listener::Socket::bind(&address, protocol, &options).map_err(bind_error)?,
+                options,
+            ),
+        };
+        prepared.sockets.insert(new, taken);
     }
     Ok(())
 }

@@ -12,10 +12,16 @@ publish.workspace = true
 
 [dependencies]
 arc-swap.workspace = true
+base64.workspace = true
+# JA3 is MD5 by definition (an optional, legacy fingerprint; H-SEC-03).
+md-5.workspace = true
 pkcs8.workspace = true
+# ChaCha20-Poly1305 session tickets with keys we can share and hand over (H-PERF-02).
+ring.workspace = true
 rdock-model.workspace = true
 rustls.workspace = true
 rustls-pki-types.workspace = true
+subtle.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 x509-parser.workspace = true
