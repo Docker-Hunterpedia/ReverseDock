@@ -4,6 +4,10 @@ All notable changes to ReverseDock are documented here. The format follows [Keep
 
 ## [Unreleased]
 
+### Fixed
+
+- **Release workflow:** the `image` job now creates the `sbom/` directory before syft writes the image SBOMs. In the `1.0.0-rc.1` release the job failed at that step, so the `1.0.0-rc.1` image has no SBOM attestation; its archives, checksums, signatures, provenance and archive SBOM attestations were published as planned.
+
 ## [1.0.0-rc.1] — v1.0 "Stable" (release candidate)
 
 Released 2026-11-14: steps 1 to 11 of v1.0 "Stable" ([ADR-0033](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0033-v1-0-stable.md), [docs/10-stability.md](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/10-stability.md)). This is a release candidate: the final 1.0 waits for an independent security review, which has not been done, and pre-releases do not move the `latest` image tag. The stability promise and the compatibility gate are in force from this release on. WASM plugins and HTTP/3 stay experimental and out of the release binaries and images. The benchmark with the 1.0 method, the 24-hour soak and a 60-second HTTPS run on a real server have not run; `docs/07-roadmap.md` says what has run and what is open.

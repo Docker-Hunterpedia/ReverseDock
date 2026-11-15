@@ -339,6 +339,8 @@ jobs:
           IMAGE: ${{ steps.push.outputs.image }}
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
+          # sbom-action writes its output file but does not create the directory.
+          mkdir -p sbom
           docker buildx imagetools inspect "$IMAGE@$DIGEST" --raw > index.json
           for arch in amd64 arm64; do
             d=$(jq -r --arg arch "$arch" '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch)] | if length == 1 then .[0].digest else empty end' index.json)
