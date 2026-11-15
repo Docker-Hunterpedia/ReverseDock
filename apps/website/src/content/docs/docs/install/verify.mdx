@@ -97,13 +97,13 @@ gh attestation verify oci://ghcr.io/docker-hunterpedia/rdock:1.0.0-rc.1 --repo D
 The SBOM of the image is attested to the manifest digest of each platform, not to the tag. Look the digest up, then verify (SPDX 2.3 is what the release workflow writes today):
 
 ```sh
-digest=$(docker buildx imagetools inspect --raw ghcr.io/docker-hunterpedia/rdock:1.0.0-rc.1 |
+digest=$(docker buildx imagetools inspect --raw ghcr.io/docker-hunterpedia/rdock:<version> |
   jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest')
 gh attestation verify "oci://ghcr.io/docker-hunterpedia/rdock@$digest" --repo Docker-Hunterpedia/ReverseDock \
   --predicate-type https://spdx.dev/Document/v2.3
 ```
 
-This works from `1.0.0-rc.1` on; images up to `0.9.0-alpha.1` have no SBOM attestation.
+This works for releases after `1.0.0-rc.1`. Images up to and including `1.0.0-rc.1` have no SBOM attestation: in the `1.0.0-rc.1` release the image was pushed, signed and given its provenance attestation, but the SBOM step failed. Their archives have SBOMs and SBOM attestations (step 4).
 
 Tags are never overwritten once published, but a tag is still a name. The `latest` tag moves only to the highest stable version: a patch for an older minor and a pre-release never take it. To be certain you deploy what you verified, use the digest that `cosign verify` printed:
 
